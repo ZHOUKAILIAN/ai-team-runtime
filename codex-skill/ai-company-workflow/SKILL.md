@@ -5,12 +5,9 @@ description: Use when the user wants a requirement executed through the AI Compa
 
 # AI Company Workflow
 
-Use this skill only when the current workspace contains the AI Company runtime:
-- `ai_company/cli.py`
-- `Product/`
-- `Dev/`
-- `QA/`
-- `Acceptance/`
+Use this skill when either of these is true:
+- the current workspace contains the AI Company runtime
+- the runtime was globally installed under `~/.codex/vendor/ai-team`
 
 ## Trigger Phrases
 
@@ -25,10 +22,10 @@ Treat these as direct workflow execution requests:
 ## Execution
 
 1. Keep the user's original message intact.
-2. Run the runtime from the repository root:
+2. Prefer the installed helper script for deterministic execution:
 
 ```bash
-python3 -m ai_company agent-run --message "<the user's original message>" --print-review
+~/.codex/skills/ai-company-workflow/scripts/company-run.sh "<the user's original message>"
 ```
 
 3. Summarize:
@@ -40,6 +37,8 @@ python3 -m ai_company agent-run --message "<the user's original message>" --prin
 
 ## If The Runtime Is Missing
 
-Do not pretend the workflow ran. State that the current workspace does not contain the AI Company runtime and point the user to install or open the repository that includes:
-- `ai_company/`
-- role folders such as `Product/` and `Dev/`
+Do not pretend the workflow ran. State that neither the current workspace nor `~/.codex/vendor/ai-team` contains the AI Company runtime, and point the user to run:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/ZHOUKAILIAN/AI_Team/main/scripts/install-codex-ai-team.sh)
+```

@@ -26,8 +26,10 @@ class DocsTests(unittest.TestCase):
         readme = (repo_root / "README_zh.md").read_text()
 
         self.assertIn("install-codex-skill.sh", readme)
+        self.assertIn("install-codex-ai-team.sh", readme)
         self.assertIn("/company-run", readme)
         self.assertIn("~/.codex/skills", readme)
+        self.assertIn("~/.codex/vendor/ai-team", readme)
 
 
 if __name__ == "__main__":

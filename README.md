@@ -134,6 +134,39 @@ The installed skill is the trigger/router layer. The actual execution still runs
 python3 -m ai_company agent-run --message "<your original message>" --print-review
 ```
 
+### One-Command Global Install
+For teammates on another machine, prefer the global installer. It does both:
+- installs the skill into `~/.codex/skills/ai-company-workflow`
+- vendors the runtime repository into `~/.codex/vendor/ai-team`
+
+If the repository is public, run:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/ZHOUKAILIAN/AI_Team/main/scripts/install-codex-ai-team.sh)
+```
+
+If the repository is already cloned locally, run:
+
+```bash
+./scripts/install-codex-ai-team.sh
+```
+
+After installation, the preferred Codex triggers are:
+- `/company-run build a self-improving AI company loop`
+- `执行这个需求：做一个支持下游纠偏和自学习的 AI 公司流程`
+
+The stable vendored runtime location is:
+
+```bash
+~/.codex/vendor/ai-team
+```
+
+The installed skill will prefer this helper:
+
+```bash
+~/.codex/skills/ai-company-workflow/scripts/company-run.sh "<your original message>"
+```
+
 ### How The Learning Loop Works
 1. `Product` turns the raw request into a PRD with explicit acceptance criteria.
 2. `Dev` converts the PRD into a technical plan.
