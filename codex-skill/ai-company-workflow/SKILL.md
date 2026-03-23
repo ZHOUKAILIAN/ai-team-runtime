@@ -28,12 +28,29 @@ Treat these as direct workflow execution requests:
 ~/.codex/skills/ai-company-workflow/scripts/company-run.sh "<the user's original message>"
 ```
 
-3. Summarize:
+3. Treat the returned workflow `acceptance_status` as **workflow metadata only**. The default vendor runtime uses a deterministic backend, so its QA and Acceptance artifacts do **not** count as real code/browser/test verification.
+4. If the request targets code in the current workspace, continue after the workflow run instead of stopping:
+- if the current git worktree is dirty or the user asked for a new branch, create an isolated branch/worktree before editing
+- inspect the actual repository, find the root cause, and implement the requirement end-to-end
+- run **real QA** as technical verification with concrete evidence:
+  - if the user already specified the verification platform, treat that as the platform choice instead of asking again; phrases such as `Mini Program`, `小程序`, or `miniprogram` mean Mini Program verification, and phrases such as `Web`, `网页`, or `browser-use` mean Web verification
+  - for server-side changes, start the relevant service(s) when feasible and verify the requirement through the real request path or full end-to-end chain, not only unit tests or static inspection
+  - for frontend changes, use `miniprogram` for Mini Program flows and `browser-use` for Web flows
+  - use targeted tests and relevant suites as supporting evidence, not as the only verification when a real runnable surface exists
+- run **real Acceptance** as **product-level acceptance**:
+  - do not focus on implementation details
+  - if the user already specified the verification platform, do not ask again; carry that platform choice into Acceptance
+  - operate the product through the final user-facing surface, using `miniprogram` for Mini Program flows and `browser-use` for Web flows
+  - judge only whether the original pain point, user scenario, and expected user-visible behavior are satisfied
+- if product-level evidence is missing because credentials, external services, or platforms are unavailable, say so explicitly and mark Acceptance as blocked or provisional instead of accepted
+5. Summarize both the workflow output and the real execution evidence:
 - `session_id`
-- `acceptance_status`
+- workflow `acceptance_status`
 - `review.md` path
 - downstream findings
 - learned memory/context/skill updates, if any
+- real QA commands and results
+- real product-level Acceptance decision and any remaining gaps
 
 ## If The Runtime Is Missing
 
