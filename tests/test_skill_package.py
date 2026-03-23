@@ -6,6 +6,14 @@ from tempfile import TemporaryDirectory
 
 
 class SkillPackageTests(unittest.TestCase):
+    @staticmethod
+    def _front_matter(path: Path) -> str:
+        content = path.read_text()
+        parts = content.split("---", 2)
+        if len(parts) < 3:
+            raise AssertionError(f"{path} is missing YAML front matter")
+        return f"---{parts[1]}---\n"
+
     def test_installable_skill_exists_and_declares_trigger(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
         skill_path = repo_root / "codex-skill" / "ai-company-workflow" / "SKILL.md"
@@ -17,6 +25,19 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("name: ai-company-workflow", content)
         self.assertIn("/company-run", content)
         self.assertIn("company-run.sh", content)
+
+    def test_installable_skill_front_matter_is_valid_yaml(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        skill_path = repo_root / "codex-skill" / "ai-company-workflow" / "SKILL.md"
+        result = subprocess.run(
+            ["ruby", "-e", "require 'yaml'; Psych.safe_load(STDIN.read)"],
+            input=self._front_matter(skill_path),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_install_script_copies_skill_into_codex_home(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
@@ -40,6 +61,15 @@ class SkillPackageTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0)
             self.assertTrue(installed_skill.exists())
             self.assertTrue(installed_helper.exists())
+
+            yaml_result = subprocess.run(
+                ["ruby", "-e", "require 'yaml'; Psych.safe_load(STDIN.read)"],
+                input=self._front_matter(installed_skill),
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(yaml_result.returncode, 0, yaml_result.stderr)
 
     def test_global_install_script_vendors_repo_and_skill(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]

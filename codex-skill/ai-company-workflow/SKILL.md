@@ -1,6 +1,6 @@
 ---
 name: ai-company-workflow
-description: Use when the user wants a requirement executed through the AI Company Product -> Dev -> QA -> Acceptance loop, especially with triggers like /company-run, 执行这个需求：..., or Run this requirement through the AI Company workflow: ...
+description: "Use when the user wants a requirement executed through the AI Company Product -> Dev -> QA -> Acceptance loop, especially with triggers like /company-run, 执行这个需求：..., or Run this requirement through the AI Company workflow: ..."
 ---
 
 # AI Company Workflow
