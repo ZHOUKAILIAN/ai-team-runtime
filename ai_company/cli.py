@@ -32,6 +32,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser = subparsers.add_parser(
         "run",
         help="Demo command: execute the deterministic workflow session from an explicit request.",
+        description="Demo command: execute the deterministic workflow session from an explicit request.",
     )
     run_parser.add_argument("--request", required=True, help="Raw feature or process request.")
     run_parser.add_argument(
@@ -51,6 +52,7 @@ def build_parser() -> argparse.ArgumentParser:
     agent_run_parser = subparsers.add_parser(
         "agent-run",
         help="Demo command: execute the deterministic workflow session from a raw user message.",
+        description="Demo command: execute the deterministic workflow session from a raw user message.",
     )
     agent_run_parser.add_argument("--message", required=True, help="Raw user message for the agent to process.")
     agent_run_parser.add_argument(

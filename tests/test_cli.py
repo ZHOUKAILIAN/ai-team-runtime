@@ -51,6 +51,25 @@ class CliTests(unittest.TestCase):
         self.assertIn("session_id:", result.stdout)
         self.assertIn("acceptance_status:", result.stdout)
 
+    def test_run_and_agent_run_help_describe_demo_deterministic_commands(self) -> None:
+        run_help = subprocess.run(
+            [sys.executable, "-m", "ai_company", "run", "--help"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        agent_run_help = subprocess.run(
+            [sys.executable, "-m", "ai_company", "agent-run", "--help"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(run_help.returncode, 0)
+        self.assertEqual(agent_run_help.returncode, 0)
+        self.assertIn("Demo command: execute the deterministic workflow session", run_help.stdout)
+        self.assertIn("Demo command: execute the deterministic workflow session", agent_run_help.stdout)
+
     def test_start_session_bootstraps_session_from_raw_message(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
 
