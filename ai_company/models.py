@@ -67,15 +67,19 @@ class SessionRecord:
     created_at: str
     session_dir: Path
     artifact_dir: Path
+    raw_message: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "session_id": self.session_id,
             "request": self.request,
             "created_at": self.created_at,
             "session_dir": str(self.session_dir),
             "artifact_dir": str(self.artifact_dir),
         }
+        if self.raw_message is not None:
+            payload["raw_message"] = self.raw_message
+        return payload
 
 
 @dataclass(slots=True)

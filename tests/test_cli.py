@@ -1,6 +1,7 @@
 import subprocess
 import sys
 import unittest
+import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -24,6 +25,7 @@ class CliTests(unittest.TestCase):
         self.assertIn("run", result.stdout)
         self.assertIn("review", result.stdout)
         self.assertIn("agent-run", result.stdout)
+        self.assertIn("start-session", result.stdout)
 
     def test_agent_run_accepts_raw_user_message(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
@@ -72,6 +74,7 @@ class CliTests(unittest.TestCase):
 
     def test_start_session_bootstraps_session_from_raw_message(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
+        raw_message = "执行这个需求：做一个支持验收回写学习记录的任务系统"
 
         with TemporaryDirectory(dir=local_temp_dir()) as temp_dir:
             result = subprocess.run(
@@ -85,7 +88,7 @@ class CliTests(unittest.TestCase):
                     temp_dir,
                     "start-session",
                     "--message",
-                    "执行这个需求：做一个支持验收回写学习记录的任务系统",
+                    raw_message,
                 ],
                 capture_output=True,
                 text=True,
@@ -100,15 +103,34 @@ class CliTests(unittest.TestCase):
             output_lines = [line for line in result.stdout.splitlines() if ":" in line]
             output_map = dict(line.split(": ", 1) for line in output_lines)
 
+            session_id = output_map["session_id"]
             artifact_dir = Path(output_map["artifact_dir"])
             summary_path = Path(output_map["summary_path"])
             request_path = artifact_dir / "request.md"
+            session_json_path = Path(temp_dir) / "sessions" / session_id / "session.json"
 
             self.assertTrue(artifact_dir.exists())
             self.assertTrue(summary_path.exists())
             self.assertTrue(request_path.exists())
+            self.assertTrue(session_json_path.exists())
             self.assertIn("做一个支持验收回写学习记录的任务系统", request_path.read_text())
-            self.assertNotIn("执行这个需求", request_path.read_text())
+            self.assertIn(raw_message, request_path.read_text())
+            session_payload = json.loads(session_json_path.read_text())
+            self.assertEqual(session_payload["raw_message"], raw_message)
+
+    def test_start_session_help_describes_session_scaffold_command(self) -> None:
+        result = subprocess.run(
+            [sys.executable, "-m", "ai_company", "start-session", "--help"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0)
+        self.assertIn(
+            "Create a session scaffold for the single-session AI_Team workflow.",
+            result.stdout,
+        )
 
 
 if __name__ == "__main__":

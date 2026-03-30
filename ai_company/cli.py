@@ -45,6 +45,7 @@ def build_parser() -> argparse.ArgumentParser:
     start_session_parser = subparsers.add_parser(
         "start-session",
         help="Create a session scaffold for the single-session AI_Team workflow.",
+        description="Create a session scaffold for the single-session AI_Team workflow.",
     )
     start_session_parser.add_argument("--message", required=True, help="Raw user message for session intake.")
     start_session_parser.set_defaults(handler=_handle_start_session)
@@ -104,7 +105,7 @@ def _handle_start_session(args: argparse.Namespace) -> int:
         raise SystemExit("Unable to extract a workflow request from --message.")
 
     store = StateStore(args.state_root)
-    session = store.create_session(request)
+    session = store.create_session(request, raw_message=args.message)
     summary_path = store.workflow_summary_path(session.session_id)
 
     print(f"session_id: {session.session_id}")

@@ -24,7 +24,7 @@ class StateStore:
         ):
             directory.mkdir(parents=True, exist_ok=True)
 
-    def create_session(self, request: str) -> SessionRecord:
+    def create_session(self, request: str, raw_message: str | None = None) -> SessionRecord:
         self.ensure_layout()
         session_id = self._next_session_id(request)
         artifact_dir = self.root / "artifacts" / session_id
@@ -40,10 +40,20 @@ class StateStore:
             created_at=datetime.now(UTC).isoformat(),
             session_dir=session_dir,
             artifact_dir=artifact_dir,
+            raw_message=raw_message,
         )
         self._write_json(session_dir / "session.json", session.to_dict())
         request_path = artifact_dir / "request.md"
-        request_path.write_text(f"# Workflow Request\n\n{request.strip()}\n")
+        if raw_message is None:
+            request_path.write_text(f"# Workflow Request\n\n{request.strip()}\n")
+        else:
+            request_path.write_text(
+                "# Workflow Request\n\n"
+                "## Normalized Request\n\n"
+                f"{request.strip()}\n\n"
+                "## Raw Intake Message\n\n"
+                f"{raw_message}\n"
+            )
         self.save_workflow_summary(
             session,
             WorkflowSummary(
