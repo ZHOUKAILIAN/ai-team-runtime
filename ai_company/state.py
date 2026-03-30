@@ -5,7 +5,8 @@ import re
 from datetime import UTC, datetime
 from pathlib import Path
 
-from .models import Finding, SessionRecord, StageOutput, StageRecord
+from .models import Finding, SessionRecord, StageOutput, StageRecord, WorkflowSummary
+from .workflow_summary import render_workflow_summary
 
 VALID_ROLE_NAMES = {"Product", "Dev", "QA", "Acceptance", "Ops"}
 
@@ -41,7 +42,20 @@ class StateStore:
             artifact_dir=artifact_dir,
         )
         self._write_json(session_dir / "session.json", session.to_dict())
-        (artifact_dir / "request.md").write_text(f"# Workflow Request\n\n{request.strip()}\n")
+        request_path = artifact_dir / "request.md"
+        request_path.write_text(f"# Workflow Request\n\n{request.strip()}\n")
+        self.save_workflow_summary(
+            session,
+            WorkflowSummary(
+                session_id=session.session_id,
+                current_state="Intake",
+                current_stage="Intake",
+                artifact_paths={
+                    "request": str(request_path),
+                    "workflow_summary": str(self.workflow_summary_path(session.session_id)),
+                },
+            ),
+        )
         return session
 
     def record_stage(self, session: SessionRecord, output: StageOutput) -> StageRecord:
@@ -71,6 +85,14 @@ class StateStore:
         review_path = session.session_dir / "review.md"
         review_path.write_text(content)
         return review_path
+
+    def workflow_summary_path(self, session_id: str) -> Path:
+        return self.root / "artifacts" / session_id / "workflow_summary.md"
+
+    def save_workflow_summary(self, session: SessionRecord, summary: WorkflowSummary) -> Path:
+        summary_path = self.workflow_summary_path(session.session_id)
+        summary_path.write_text(render_workflow_summary(summary))
+        return summary_path
 
     def update_session(
         self,
@@ -181,7 +203,7 @@ class StateStore:
 def artifact_name_for_stage(stage: str) -> str:
     return {
         "Product": "prd.md",
-        "Dev": "tech_spec.md",
+        "Dev": "implementation.md",
         "QA": "qa_report.md",
         "Acceptance": "acceptance_report.md",
         "Ops": "release_notes.md",

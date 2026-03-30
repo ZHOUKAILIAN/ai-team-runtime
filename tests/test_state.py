@@ -20,6 +20,15 @@ class StateTests(unittest.TestCase):
 
             self.assertTrue((Path(temp_dir) / "sessions" / session.session_id / "session.json").exists())
             self.assertTrue((Path(temp_dir) / "artifacts" / session.session_id).exists())
+            workflow_summary = Path(temp_dir) / "artifacts" / session.session_id / "workflow_summary.md"
+            self.assertTrue(workflow_summary.exists())
+            summary_text = workflow_summary.read_text()
+            self.assertIn("- current_state: Intake", summary_text)
+            self.assertIn("- current_stage: Intake", summary_text)
+            self.assertIn("- prd_status: pending", summary_text)
+            self.assertIn("- human_decision: pending", summary_text)
+            self.assertIn("- request:", summary_text)
+            self.assertIn("- workflow_summary:", summary_text)
 
     def test_state_store_creates_unique_session_ids_for_same_request(self) -> None:
         from ai_company.state import StateStore
@@ -62,6 +71,11 @@ class StateTests(unittest.TestCase):
             self.assertIn("Dev", roles)
             self.assertIn("Product Manager Onboarding Manual", roles["Product"].effective_context_text)
             self.assertIn("Initialized memory system", roles["Product"].effective_memory_text)
+
+    def test_artifact_name_for_dev_stage_is_implementation(self) -> None:
+        from ai_company.state import artifact_name_for_stage
+
+        self.assertEqual(artifact_name_for_stage("Dev"), "implementation.md")
 
 
 if __name__ == "__main__":

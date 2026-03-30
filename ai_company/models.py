@@ -79,6 +79,36 @@ class SessionRecord:
 
 
 @dataclass(slots=True)
+class WorkflowSummary:
+    session_id: str
+    current_state: str
+    current_stage: str
+    prd_status: str = "pending"
+    dev_status: str = "pending"
+    qa_status: str = "pending"
+    acceptance_status: str = "pending"
+    human_decision: str = "pending"
+    qa_round: int = 0
+    blocked_reason: str = ""
+    artifact_paths: dict[str, str] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "session_id": self.session_id,
+            "current_state": self.current_state,
+            "current_stage": self.current_stage,
+            "prd_status": self.prd_status,
+            "dev_status": self.dev_status,
+            "qa_status": self.qa_status,
+            "acceptance_status": self.acceptance_status,
+            "human_decision": self.human_decision,
+            "qa_round": self.qa_round,
+            "blocked_reason": self.blocked_reason,
+            "artifact_paths": dict(self.artifact_paths),
+        }
+
+
+@dataclass(slots=True)
 class StageOutput:
     stage: str
     artifact_name: str
