@@ -14,6 +14,14 @@ class SkillPackageTests(unittest.TestCase):
             raise AssertionError(f"{path} is missing YAML front matter")
         return f"---{parts[1]}---\n"
 
+    @staticmethod
+    def _assert_common_follow_through_contract(testcase: unittest.TestCase, content: str) -> None:
+        testcase.assertIn("Continue after session bootstrap", content)
+        testcase.assertIn("inspect and implement in the real repository", content)
+        testcase.assertIn("execute real verification against the runnable path when feasible", content)
+        testcase.assertIn("collect concrete evidence for QA and Acceptance decisions", content)
+        testcase.assertIn("if evidence is missing, report blocked instead of accepted", content)
+
     def test_root_skill_describes_single_session_state_machine(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
         root_skill = repo_root / "SKILL.md"
@@ -45,6 +53,7 @@ class SkillPackageTests(unittest.TestCase):
             "deterministic runtime output is workflow metadata only, not real QA/Acceptance evidence",
             content,
         )
+        self._assert_common_follow_through_contract(self, content)
 
     def test_installable_skill_exists_and_declares_trigger(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
@@ -82,6 +91,28 @@ class SkillPackageTests(unittest.TestCase):
             "deterministic runtime output is workflow metadata only, not real QA/Acceptance evidence",
             content,
         )
+        self.assertIn("helper script only bootstraps a session", content)
+        self.assertIn("continue the state machine in the current Codex session", content)
+        self.assertIn("does not complete QA or Acceptance by itself", content)
+        self._assert_common_follow_through_contract(self, content)
+
+    def test_root_and_packaged_skills_keep_follow_through_parity(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        root_content = (repo_root / "SKILL.md").read_text()
+        packaged_content = (
+            repo_root / "codex-skill" / "ai-company-workflow" / "SKILL.md"
+        ).read_text()
+
+        follow_through_lines = [
+            "Continue after session bootstrap:",
+            "- inspect and implement in the real repository",
+            "- execute real verification against the runnable path when feasible",
+            "- collect concrete evidence for QA and Acceptance decisions",
+            "- if evidence is missing, report blocked instead of accepted",
+        ]
+        for line in follow_through_lines:
+            self.assertIn(line, root_content)
+            self.assertIn(line, packaged_content)
 
     def test_installable_skill_front_matter_is_valid_yaml(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]

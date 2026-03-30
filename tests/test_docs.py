@@ -16,22 +16,22 @@ class DocsTests(unittest.TestCase):
         repo_root = Path(__file__).resolve().parents[1]
         skill = (repo_root / "SKILL.md").read_text()
 
-        self.assertIn("agent-friendly", skill)
+        self.assertIn("Agent-Friendly", skill)
         self.assertIn("执行这个需求：", skill)
-        self.assertIn("python3 -m ai_company agent-run", skill)
+        self.assertIn("python3 -m ai_company start-session", skill)
         self.assertIn("/company-run", skill)
 
-    def test_skill_documents_platform_verification_rules(self) -> None:
+    def test_skill_documents_single_session_follow_through_rules(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
         root_skill = (repo_root / "SKILL.md").read_text()
         qa_skill = (repo_root / "QA" / "SKILL.md").read_text()
         acceptance_skill = (repo_root / "Acceptance" / "SKILL.md").read_text()
 
-        self.assertIn("miniprogram", root_skill)
-        self.assertIn("browser-use", root_skill)
-        self.assertIn("already specified the verification platform", root_skill)
-        self.assertNotIn("gstack browse", root_skill)
-        self.assertNotIn("`minipro`", root_skill)
+        self.assertIn("start-session", root_skill)
+        self.assertIn("Continue after session bootstrap", root_skill)
+        self.assertIn("workflow_summary.md", root_skill)
+        self.assertIn("WaitForCEOApproval", root_skill)
+        self.assertIn("WaitForHumanDecision", root_skill)
         self.assertIn("already specified the verification platform", qa_skill)
         self.assertIn("miniprogram", qa_skill)
         self.assertIn("browser-use", qa_skill)

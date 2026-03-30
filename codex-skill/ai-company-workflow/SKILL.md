@@ -28,11 +28,15 @@ Treat these as direct workflow execution requests:
 ~/.codex/skills/ai-company-workflow/scripts/company-run.sh "<the user's original message>"
 ```
 
+The helper script only bootstraps a session. It does not complete QA or Acceptance by itself.
+
 3. Direct bootstrap command:
 
 ```bash
 python3 -m ai_company start-session --message "<the user's original message>"
 ```
+
+After bootstrap, continue the state machine in the current Codex session to produce the full artifact contract.
 
 4. deterministic runtime output is workflow metadata only, not real QA/Acceptance evidence.
 5. Follow the single-session state machine:
@@ -45,6 +49,12 @@ python3 -m ai_company start-session --message "<the user's original message>"
 - `workflow_summary.md`
 7. QA must independently rerun verification, missing evidence forces blocked.
 8. Acceptance recommends while the human decides.
+
+Continue after session bootstrap:
+- inspect and implement in the real repository
+- execute real verification against the runnable path when feasible
+- collect concrete evidence for QA and Acceptance decisions
+- if evidence is missing, report blocked instead of accepted
 
 ## If The Runtime Is Missing
 
