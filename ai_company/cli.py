@@ -20,7 +20,7 @@ def main(argv: list[str] | None = None) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="ai_company",
-        description="Run the Product -> Dev -> QA -> Acceptance workflow with persisted learning.",
+        description="AI_Team single-session workflow CLI. Use start-session to bootstrap real session scaffolds.",
     )
     parser.add_argument("--repo-root", type=Path, default=Path("."))
     parser.add_argument("--state-root", type=Path)
@@ -29,7 +29,10 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser = subparsers.add_parser("init-state", help="Create the workflow state directories.")
     init_parser.set_defaults(handler=_handle_init_state)
 
-    run_parser = subparsers.add_parser("run", help="Execute a workflow session.")
+    run_parser = subparsers.add_parser(
+        "run",
+        help="Demo command: execute the deterministic workflow session from an explicit request.",
+    )
     run_parser.add_argument("--request", required=True, help="Raw feature or process request.")
     run_parser.add_argument(
         "--print-review",
@@ -38,9 +41,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run_parser.set_defaults(handler=_handle_run)
 
+    start_session_parser = subparsers.add_parser(
+        "start-session",
+        help="Create a session scaffold for the single-session AI_Team workflow.",
+    )
+    start_session_parser.add_argument("--message", required=True, help="Raw user message for session intake.")
+    start_session_parser.set_defaults(handler=_handle_start_session)
+
     agent_run_parser = subparsers.add_parser(
         "agent-run",
-        help="Execute a workflow session from the user's raw natural-language message.",
+        help="Demo command: execute the deterministic workflow session from a raw user message.",
     )
     agent_run_parser.add_argument("--message", required=True, help="Raw user message for the agent to process.")
     agent_run_parser.add_argument(
@@ -84,6 +94,21 @@ def _handle_agent_run(args: argparse.Namespace) -> int:
         request=request,
         print_review=args.print_review,
     )
+
+
+def _handle_start_session(args: argparse.Namespace) -> int:
+    request = extract_request_from_message(args.message) or args.message.strip()
+    if not request:
+        raise SystemExit("Unable to extract a workflow request from --message.")
+
+    store = StateStore(args.state_root)
+    session = store.create_session(request)
+    summary_path = store.workflow_summary_path(session.session_id)
+
+    print(f"session_id: {session.session_id}")
+    print(f"artifact_dir: {session.artifact_dir}")
+    print(f"summary_path: {summary_path}")
+    return 0
 
 
 def _execute_workflow(
