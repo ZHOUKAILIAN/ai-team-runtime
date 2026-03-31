@@ -38,28 +38,39 @@ Our company is divided into five core departments, each with its dedicated perso
 - **Tone**: Professional, Innovative, Efficient, and Empathetic.
 - **Responsibilities**: User Growth & Engagement, Go-to-Market Strategy, Market Feedback Loop, User Enablement.
 
-## ⚙️ Working Mechanism & Dual-Mode Execution
-The synergy among these roles is what keeps the company running efficiently. We support two execution modes based on the Codex agent capabilities:
+## ⚙️ Workflow Contract (Authoritative)
+The real workflow contract is:
 
-### Mode A: End-to-End Autonomous (`/build-e2e`)
-Ideal for smaller, well-defined features. The AI orchestrates the entire flow autonomously.
-- You run `/build-e2e`. The AI automatically sequentially triggers Product -> Dev -> QA -> Ops.
-- You only intervene at the end during the Acceptance check to provide the final sign-off.
+`Product -> CEO approval -> Dev <-> QA -> Acceptance -> human Go/No-Go`
 
-### Mode B: Step-by-Step Interactive
-Ideal for complex or high-risk epics where you want CEO-level control over each hand-off.
-1. **Idea & Requirements**: Run `/product`. Generates PRD in `.ai_company_state/artifacts/`.
-2. **Implementation**: Run `/dev`. Reads PRD, focuses on architectural design and clean code execution.
-3. **Quality Check**: Run `/qa`. Tests extensively against the PRD. Bug reports are routed back to Dev.
-4. **Final Sign-off**: Run `/acceptance`. Provides the final end-to-end verification beyond QA, confirming the business value.
-5. **Growth & Feedback**: Run `/ops`. Launches the feature to users, tracks growth metrics.
+This means:
+- Product creates the requirement package.
+- CEO approval is required before Dev starts implementation.
+- Dev and QA iterate until critical verification evidence is complete.
+- Acceptance provides the final recommendation.
+- A human makes the final Go/No-Go decision.
+
+Role boundaries:
+- superpower TDD belongs to Dev (implementation discipline), not QA.
+- QA must independently rerun critical verification and cannot accept Dev claims without rerun evidence.
+- missing evidence forces blocked.
+
+Contract artifacts (required per session):
+- `implementation.md`
+- `workflow_summary.md`
+
+Contract entry command for agent-friendly requests:
+
+```bash
+python3 -m ai_company start-session --message "<your original message>"
+```
 
 *Note: All execution states, session memories, and artifact hand-offs are stored locally in the `.ai_company_state/` directory to keep the workspace clean.*
 
 ## Local Runtime And Learning Loop
-This repository now includes a runnable local workflow engine with the default execution path:
+This repository now includes a runnable local workflow engine. Its workflow metadata aligns with:
 
-`Product -> Dev -> QA -> Acceptance`
+`Product -> CEO approval -> Dev <-> QA -> Acceptance -> human Go/No-Go`
 
 Compared with the original document-only workflow, the runtime adds three concrete capabilities:
 - **Full traceability**: every stage writes an artifact, journal, findings file, and session metadata.
@@ -69,7 +80,7 @@ Compared with the original document-only workflow, the runtime adds three concre
 ### Directory Layout
 - `Product/`, `Dev/`, `QA/`, `Acceptance/`, `Ops/`: seed role definitions with `context.md`, `memory.md`, and `SKILL.md`
 - `.ai_company_state/sessions/<session_id>/`: per-run journals and review artifacts
-- `.ai_company_state/artifacts/<session_id>/`: stage deliverables such as `prd.md`, `tech_spec.md`, `qa_report.md`, and `acceptance_report.md`
+- `.ai_company_state/artifacts/<session_id>/`: stage deliverables such as `prd.md`, `implementation.md`, `qa_report.md`, `acceptance_report.md`, and `workflow_summary.md`
 - `.ai_company_state/memory/<Role>/`: runtime learning overlays containing `lessons.md`, `context_patch.md`, and `skill_patch.md`
 
 ### Commands
@@ -79,7 +90,7 @@ Initialize the local state directories:
 python3 -m ai_company init-state
 ```
 
-Run a full workflow loop:
+Run a full workflow loop (`run` and `agent-run` are deterministic/demo runtime commands):
 
 ```bash
 python3 -m ai_company run --request "Build a self-improving AI company loop" --print-review
@@ -92,7 +103,7 @@ python3 -m ai_company review
 ```
 
 ### agent-friendly Mode
-If a human is driving from the shell, `run` is fine. If an agent receives a natural-language instruction, use `agent-run` and pass the raw message through unchanged:
+If a human is driving from the shell, `run` is fine for deterministic/demo runtime metadata. If an agent receives a natural-language instruction, use `agent-run` and pass the raw message through unchanged (also deterministic/demo runtime metadata):
 
 ```bash
 python3 -m ai_company agent-run --message "Run this requirement through the AI Company workflow: build a self-improving agent loop" --print-review
@@ -110,6 +121,12 @@ Recommended trigger phrases for agents:
 - `Run this requirement through the AI Company workflow: ...`
 
 If no trigger prefix matches, `agent-run` falls back to using the entire message as the request.
+
+For the authoritative workflow bootstrap path, use:
+
+```bash
+python3 -m ai_company start-session --message "<your original message>"
+```
 
 ### Install As A Codex Skill
 If you want to reuse this in future Codex sessions, install the bundled skill from this repository:
