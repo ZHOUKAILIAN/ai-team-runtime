@@ -83,6 +83,7 @@ class WorkflowOrchestrator:
             stage_artifacts=stage_artifacts,
             findings=findings,
             acceptance_status=acceptance_status,
+            workflow_summary=summary,
         )
         review_path = self.state_store.save_review(session, review)
         self.state_store.update_session(

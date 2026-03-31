@@ -92,6 +92,50 @@ class OrchestratorTests(unittest.TestCase):
             self.assertIn("- qa_status: completed", summary)
             self.assertIn("- acceptance_status: rejected", summary)
 
+    def test_review_includes_workflow_status_from_orchestrator_run(self) -> None:
+        from ai_company.backend import StaticBackend
+        from ai_company.orchestrator import WorkflowOrchestrator
+        from ai_company.state import StateStore
+
+        repo_root = Path(__file__).resolve().parents[1]
+
+        with TemporaryDirectory(dir=local_temp_dir()) as temp_dir:
+            state_root = Path(temp_dir)
+            backend = StaticBackend.fixture(
+                product_requirements="Users can create a task",
+                prd="PRD v1",
+                tech_spec="Tech spec v1",
+                qa_report="QA found missing delete flow",
+                acceptance_report="Rejected because delete flow missing",
+                findings=[
+                    {
+                        "source_stage": "QA",
+                        "target_stage": "Product",
+                        "issue": "Delete flow missing from PRD",
+                        "severity": "high",
+                    }
+                ],
+            )
+
+            result = WorkflowOrchestrator(
+                repo_root=repo_root,
+                state_store=StateStore(state_root),
+                backend=backend,
+            ).run(request="Build a task manager")
+
+            review_path = state_root / "sessions" / result.session_id / "review.md"
+            review = review_path.read_text()
+
+            self.assertIn("## Workflow Status", review)
+            self.assertIn("current_state: Completed", review)
+            self.assertIn("current_stage: Acceptance", review)
+            self.assertIn("prd_status: completed", review)
+            self.assertIn("dev_status: completed", review)
+            self.assertIn("qa_status: completed", review)
+            self.assertIn("acceptance_status: rejected", review)
+            self.assertIn("human_decision: pending", review)
+            self.assertIn("qa_round: 0", review)
+
 
 if __name__ == "__main__":
     unittest.main()
