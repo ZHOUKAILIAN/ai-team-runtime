@@ -19,7 +19,7 @@ In this design, AI_Team owns workflow governance, role boundaries, approvals, an
 - Make AI_Team run as a real single-session, multi-role workflow in Codex.
 - Require acceptance criteria to be explicit before implementation starts.
 - Stop after `Product` so the human CEO can approve the PRD and acceptance criteria.
-- Allow `Dev` to use TDD or any other available engineering workflow as an internal implementation discipline.
+- Allow `Dev` to use any available engineering workflow as an internal implementation discipline.
 - Require `QA` to independently rerun critical verification instead of accepting `Dev` evidence at face value.
 - Require `Acceptance` to perform product-level validation against the PRD and produce a recommendation, not the final human decision.
 - Persist every stage handoff as auditable files.
@@ -58,7 +58,7 @@ No fallback statuses such as "soft pass", "likely passed", or "provisional accep
 
 ### 4. QA Must Be Independent
 
-`Dev` can and should use TDD, but `QA` cannot treat `Dev`'s TDD as sufficient proof. `QA` must independently rerun critical verification and document that evidence in its own report.
+`Dev` can and should use its own engineering methodology, but `QA` cannot treat `Dev`'s self-verification as sufficient proof. `QA` must independently rerun critical verification and document that evidence in its own report.
 
 ### 5. Handoff Is File-Based
 
@@ -206,7 +206,6 @@ Responsibilities:
 
 - implement the approved scope
 - use rigorous engineering discipline for implementation work
-- use TDD inside the Dev stage where applicable
 - document exactly what changed and how it was self-verified
 
 Restrictions:
@@ -330,7 +329,7 @@ Required sections:
 - implementation target
 - change summary
 - changed files
-- TDD evidence
+- self-verification evidence
 - commands executed
 - command result summary
 - known limitations
@@ -400,9 +399,9 @@ Gate:
 
 `Acceptance` must evaluate product-level outcomes against the PRD. It must not substitute technical inference for user-visible validation.
 
-## Relationship With Superpower
+## Relationship With Dev Methodology
 
-AI_Team and any external Dev workflow are not competing systems in this design.
+AI_Team is intentionally neutral about the operator's Dev methodology, personal skills, or local setup.
 
 ### AI_Team Owns
 
@@ -413,16 +412,17 @@ AI_Team and any external Dev workflow are not competing systems in this design.
 - QA and Acceptance gates
 - final human decision pause
 
-### Superpower Owns
+### Operator-Specific Dev Methodology Owns
 
 - Dev-stage engineering discipline
 - debugging rigor when technical issues are found
-- TDD inside implementation work
+- self-verification inside implementation work
 - verification discipline before claiming fixes
+- any personal skill or tool configuration loaded by the operator's Codex environment
 
 ### Boundary Rule
 
-TDD or any other Dev-side engineering workflow strengthens implementation quality, but it does not collapse the downstream workflow. `QA` and `Acceptance` remain separate mandatory gates.
+Any Dev-side engineering workflow can strengthen implementation quality, but it does not collapse the downstream workflow. `QA` and `Acceptance` remain separate mandatory gates.
 
 ## Runtime Integration Plan
 
@@ -504,7 +504,7 @@ This design is acceptable when all of the following are true:
 - AI_Team can run as a single-session workflow in Codex without assuming native multi-agent support
 - acceptance criteria must be explicit before Dev starts
 - the workflow stops after Product for CEO approval
-- Dev may use TDD, but QA remains independent
+- Dev may use its own methodology, but QA remains independent
 - QA failure automatically returns work to Dev
 - missing evidence forces `blocked`
 - Acceptance gives a recommendation, not final release authority

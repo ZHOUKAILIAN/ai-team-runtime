@@ -134,9 +134,9 @@ class CliTests(unittest.TestCase):
         )
 
     def test_codex_init_reports_project_scoped_codex_setup(self) -> None:
-        repo_root = Path(__file__).resolve().parents[1]
-
         with TemporaryDirectory(dir=local_temp_dir()) as temp_dir:
+            repo_root = Path(temp_dir) / "repo"
+            repo_root.mkdir()
             result = subprocess.run(
                 [
                     sys.executable,
@@ -153,16 +153,25 @@ class CliTests(unittest.TestCase):
                 check=False,
             )
 
-        self.assertEqual(result.returncode, 0)
-        self.assertIn("state_root:", result.stdout)
-        self.assertIn(".codex/config.toml", result.stdout)
-        self.assertIn(".codex/agents", result.stdout)
-        self.assertIn(".agents/skills/ai-team-run/SKILL.md", result.stdout)
-        self.assertIn("project_root:", result.stdout)
-        self.assertIn("recommended_context:", result.stdout)
-        self.assertIn("$ai-team-init", result.stdout)
-        self.assertIn("$ai-team-run", result.stdout)
-        self.assertIn("manual_run_fallback:", result.stdout)
+            self.assertEqual(result.returncode, 0)
+            self.assertIn("state_root:", result.stdout)
+            self.assertIn("agents_dir:", result.stdout)
+            self.assertIn("run_skill:", result.stdout)
+            self.assertIn("generated_files: 5", result.stdout)
+            self.assertIn(".agents/skills/ai-team-run/SKILL.md", result.stdout)
+            self.assertIn("project_root:", result.stdout)
+            self.assertIn("recommended_context:", result.stdout)
+            self.assertIn("recommended_run_entry: $ai-team-run", result.stdout)
+            self.assertNotIn("$ai-team-init", result.stdout)
+            self.assertIn("$ai-team-run", result.stdout)
+            self.assertIn("manual_init_fallback:", result.stdout)
+            self.assertIn("manual_run_fallback:", result.stdout)
+            self.assertTrue((repo_root / ".codex" / "agents" / "ai_team_product.toml").exists())
+            self.assertTrue((repo_root / ".codex" / "agents" / "ai_team_dev.toml").exists())
+            self.assertTrue((repo_root / ".codex" / "agents" / "ai_team_qa.toml").exists())
+            self.assertTrue((repo_root / ".codex" / "agents" / "ai_team_acceptance.toml").exists())
+            self.assertTrue((repo_root / ".agents" / "skills" / "ai-team-run" / "SKILL.md").exists())
+            self.assertFalse((repo_root / ".codex" / "config.toml").exists())
 
 
 if __name__ == "__main__":

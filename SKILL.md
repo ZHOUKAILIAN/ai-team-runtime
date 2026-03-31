@@ -35,10 +35,17 @@ The real workflow state machine is:
 
 ## Project-Scoped Codex Setup
 
-This repository now includes official project-scoped Codex integration:
+This repository supports optional project-local Codex helpers generated on demand:
 - agents: `.codex/agents/*.toml`
-- agent limits: `.codex/config.toml`
-- skills: `.agents/skills/ai-team-init/` and `.agents/skills/ai-team-run/`
+- run skill: `.agents/skills/ai-team-run/SKILL.md`
+
+Generate them once per clone with:
+
+```bash
+./scripts/company-init.sh
+```
+
+These hidden files are gitignored and should not be committed.
 
 Preferred local helpers:
 

@@ -1,11 +1,20 @@
 from __future__ import annotations
 
+import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
 
-@dataclass(slots=True)
+if sys.version_info >= (3, 10):
+    def model_dataclass(_cls=None, **kwargs):
+        return dataclass(_cls, slots=True, **kwargs)
+else:
+    def model_dataclass(_cls=None, **kwargs):
+        return dataclass(_cls, **kwargs)
+
+
+@model_dataclass
 class Finding:
     source_stage: str
     target_stage: str
@@ -33,7 +42,7 @@ class Finding:
         return asdict(self)
 
 
-@dataclass(slots=True)
+@model_dataclass
 class RoleProfile:
     name: str
     role_dir: Path
@@ -60,7 +69,7 @@ class RoleProfile:
         return _join_sections(self.base_skill_text, self.learned_skill_text)
 
 
-@dataclass(slots=True)
+@model_dataclass
 class SessionRecord:
     session_id: str
     request: str
@@ -82,7 +91,7 @@ class SessionRecord:
         return payload
 
 
-@dataclass(slots=True)
+@model_dataclass
 class WorkflowSummary:
     session_id: str
     runtime_mode: str
@@ -114,7 +123,7 @@ class WorkflowSummary:
         }
 
 
-@dataclass(slots=True)
+@model_dataclass
 class StageOutput:
     stage: str
     artifact_name: str
@@ -124,7 +133,7 @@ class StageOutput:
     acceptance_status: str | None = None
 
 
-@dataclass(slots=True)
+@model_dataclass
 class StageRecord:
     stage: str
     artifact_name: str
@@ -144,7 +153,7 @@ class StageRecord:
         }
 
 
-@dataclass(slots=True)
+@model_dataclass
 class WorkflowResult:
     session_id: str
     acceptance_status: str

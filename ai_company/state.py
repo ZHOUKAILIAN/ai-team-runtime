@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .models import Finding, SessionRecord, StageOutput, StageRecord, WorkflowSummary
@@ -43,7 +43,7 @@ class StateStore:
         session = SessionRecord(
             session_id=session_id,
             request=request,
-            created_at=datetime.now(UTC).isoformat(),
+            created_at=datetime.now(timezone.utc).isoformat(),
             session_dir=session_dir,
             artifact_dir=artifact_dir,
             raw_message=raw_message,
@@ -121,7 +121,7 @@ class StateStore:
     ) -> None:
         payload = session.to_dict()
         payload["acceptance_status"] = acceptance_status
-        payload["updated_at"] = datetime.now(UTC).isoformat()
+        payload["updated_at"] = datetime.now(timezone.utc).isoformat()
         payload["stage_records"] = [record.to_dict() for record in stage_records]
         payload["findings"] = [finding.to_dict() for finding in findings]
         self._write_json(session.session_dir / "session.json", payload)
@@ -200,13 +200,13 @@ class StateStore:
         path.write_text(updated)
 
     def _timestamp(self) -> str:
-        return datetime.now(UTC).isoformat()
+        return datetime.now(timezone.utc).isoformat()
 
     def _write_json(self, path: Path, payload: object) -> None:
         path.write_text(json.dumps(payload, indent=2))
 
     def _next_session_id(self, request: str) -> str:
-        base = f"{datetime.now(UTC).strftime('%Y%m%dT%H%M%S%fZ')}-{_slugify(request)}"
+        base = f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')}-{_slugify(request)}"
         candidate = base
         suffix = 1
 

@@ -6,6 +6,7 @@ from pathlib import Path
 from .backend import DeterministicBackend
 from .intake import extract_request_from_message
 from .orchestrator import WorkflowOrchestrator
+from .project_scaffold import scaffold_project_codex_files
 from .state import StateStore
 
 
@@ -34,10 +35,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     codex_init_parser = subparsers.add_parser(
         "codex-init",
-        help="Verify project-scoped Codex workflow files and initialize local AI_Team state.",
+        help="Generate project-local Codex workflow files and initialize local AI_Team state.",
         description=(
-            "Verify project-scoped Codex workflow files and initialize local AI_Team state. "
-            "Use this once per clone before triggering the repo-scoped AI_Team skills."
+            "Generate project-local Codex workflow files and initialize local AI_Team state. "
+            "Use this once per clone before triggering the local AI_Team run skill."
         ),
     )
     codex_init_parser.set_defaults(handler=_handle_codex_init)
@@ -111,25 +112,14 @@ def _handle_init_state(args: argparse.Namespace) -> int:
 def _handle_codex_init(args: argparse.Namespace) -> int:
     store = StateStore(args.state_root)
     store.ensure_layout()
-
-    required_paths = {
-        "codex_config": args.repo_root / ".codex" / "config.toml",
-        "agents_dir": args.repo_root / ".codex" / "agents",
-        "init_skill": args.repo_root / ".agents" / "skills" / "ai-team-init" / "SKILL.md",
-        "run_skill": args.repo_root / ".agents" / "skills" / "ai-team-run" / "SKILL.md",
-    }
-    missing = [name for name, path in required_paths.items() if not path.exists()]
-    if missing:
-        raise SystemExit(f"Project Codex workflow files are missing: {', '.join(missing)}")
+    written_paths = scaffold_project_codex_files(args.repo_root)
 
     print(f"state_root: {args.state_root}")
     print(f"project_root: {args.repo_root}")
-    print(f"codex_config: {required_paths['codex_config']}")
-    print(f"agents_dir: {required_paths['agents_dir']}")
-    print(f"init_skill: {required_paths['init_skill']}")
-    print(f"run_skill: {required_paths['run_skill']}")
-    print("recommended_context: open Codex at the project root before using the repo-scoped skills")
-    print("recommended_init_entry: $ai-team-init")
+    print(f"agents_dir: {args.repo_root / '.codex' / 'agents'}")
+    print(f"run_skill: {args.repo_root / '.agents' / 'skills' / 'ai-team-run' / 'SKILL.md'}")
+    print(f"generated_files: {len(written_paths)}")
+    print("recommended_context: open Codex at the project root before using the local AI_Team run skill")
     print("recommended_run_entry: $ai-team-run")
     print(f"manual_init_fallback: {args.repo_root / 'scripts' / 'company-init.sh'}")
     print(f"manual_run_fallback: {args.repo_root / 'scripts' / 'company-run.sh'} \"<your message>\"")

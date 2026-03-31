@@ -36,6 +36,7 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("Acceptance", content)
         self.assertIn("WaitForHumanDecision", content)
         self.assertIn(".codex/agents/*.toml", content)
+        self.assertIn(".agents/skills/ai-team-run/SKILL.md", content)
         self.assertIn("./scripts/company-init.sh", content)
         self.assertIn("./scripts/company-run.sh", content)
         self.assertIn("prd.md", content)
@@ -71,6 +72,7 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("company-run.sh", content)
         self.assertIn("./scripts/company-init.sh", content)
         self.assertIn("./scripts/company-run.sh", content)
+        self.assertIn("keeps them out of git", content)
         self.assertIn("Intake", content)
         self.assertIn("ProductDraft", content)
         self.assertIn("WaitForCEOApproval", content)
@@ -119,16 +121,39 @@ class SkillPackageTests(unittest.TestCase):
             self.assertIn(line, root_content)
             self.assertIn(line, packaged_content)
 
-    def test_project_scoped_codex_agents_and_skills_exist(self) -> None:
+    def test_codex_init_generates_project_local_agents_and_run_skill(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
 
-        self.assertTrue((repo_root / ".codex" / "config.toml").exists())
-        self.assertTrue((repo_root / ".codex" / "agents" / "ai_team_product.toml").exists())
-        self.assertTrue((repo_root / ".codex" / "agents" / "ai_team_dev.toml").exists())
-        self.assertTrue((repo_root / ".codex" / "agents" / "ai_team_qa.toml").exists())
-        self.assertTrue((repo_root / ".codex" / "agents" / "ai_team_acceptance.toml").exists())
-        self.assertTrue((repo_root / ".agents" / "skills" / "ai-team-init" / "SKILL.md").exists())
-        self.assertTrue((repo_root / ".agents" / "skills" / "ai-team-run" / "SKILL.md").exists())
+        with TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir) / "repo"
+            state_root = Path(temp_dir) / "state"
+            project_root.mkdir()
+            result = subprocess.run(
+                [
+                    os.environ.get("PYTHON", "python3"),
+                    "-m",
+                    "ai_company",
+                    "--repo-root",
+                    str(project_root),
+                    "--state-root",
+                    str(state_root),
+                    "codex-init",
+                ],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue((project_root / ".codex" / "agents" / "ai_team_product.toml").exists())
+            self.assertTrue((project_root / ".codex" / "agents" / "ai_team_dev.toml").exists())
+            self.assertTrue((project_root / ".codex" / "agents" / "ai_team_qa.toml").exists())
+            self.assertTrue((project_root / ".codex" / "agents" / "ai_team_acceptance.toml").exists())
+            self.assertTrue((project_root / ".agents" / "skills" / "ai-team-run" / "SKILL.md").exists())
+            self.assertFalse((project_root / ".codex" / "config.toml").exists())
+            self.assertFalse((project_root / ".agents" / "skills" / "ai-team-init" / "SKILL.md").exists())
+
         self.assertTrue((repo_root / "scripts" / "company-init.sh").exists())
         self.assertTrue((repo_root / "scripts" / "company-run.sh").exists())
 

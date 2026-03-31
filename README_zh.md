@@ -51,7 +51,7 @@
 - 最终 Go/No-Go 由人类决策。
 
 角色边界：
-- TDD 以及其他仅属于 Dev 的实现纪律都归 Dev，不归 QA。
+- Dev 内部可以使用自己的实现方法论和自验证方式，但这些都不属于 QA。
 - QA 必须独立重跑关键验证，不能只接受 Dev 的口头结论。
 - 缺少证据必须 blocked。
 
@@ -63,11 +63,8 @@
 - `workflow_summary.md`
 
 正常使用时推荐的入口：
-
-```text
-$ai-team-init
-$ai-team-run
-```
+- 一次性本地初始化：`./scripts/company-init.sh`
+- 日常执行入口：`$ai-team-run`
 
 *注：所有角色的上下文记忆、交接文档与会话日志均存放在 `.ai_company_state/` 私有目录，实现与代码仓库的物理隔离。*
 
@@ -76,10 +73,10 @@ $ai-team-run
 
 1. 先确保 Codex 是在这个仓库的项目根目录打开的。
 
-2. 先初始化项目级 workflow：
+2. 先为当前 clone 生成本地隐藏的 Codex 文件：
 
-```text
-$ai-team-init
+```bash
+./scripts/company-init.sh
 ```
 
 3. 再把一个需求丢进流程：
@@ -95,15 +92,17 @@ $ai-team-run
 ./scripts/company-run.sh "执行这个需求：<你的需求>"
 ```
 
-正常使用时，优先走 skill，不建议让用户自己执行 `python3 -m ai_company ...`。
+`company-init.sh` 会按需生成项目本地的 `.codex/` 与 `.agents/` 文件，并保持它们不进入 git。
+
+正常使用时，优先走项目根目录 helper 加 repo 本地 run skill，不建议让用户自己执行 `python3 -m ai_company ...`。
 
 ## ✅ 这套流程能做什么
-这套流程的目标，是把一个需求真正跑过多角色交接，而不是退化成只有 Dev 的 TDD。
+这套流程的目标，是把一个需求真正跑过多角色交接，而不是退化成只有 Dev 自证的单角色流程。
 
 它会做这些事：
 - Product 先写 `prd.md`，并在进入 Dev 之前把验收标准写清楚。
 - Product 完成后，流程会停一次，等 CEO 批准。
-- Dev 负责实现，并把自己的 TDD 和命令证据写进 `implementation.md`。
+- Dev 负责实现，并把自己的自验证与命令证据写进 `implementation.md`。
 - QA 必须独立重跑关键验证，并把结果写进 `qa_report.md`。
 - 如果 QA 失败，会自动回到 Dev 修复后再重测。
 - Acceptance 只输出 AI 验收建议，写入 `acceptance_report.md`。
@@ -131,14 +130,14 @@ $ai-team-run
 
 ### 目录说明
 - `Product/`、`Dev/`、`QA/`、`Acceptance/`、`Ops/`：角色的种子身份定义，包含 `context.md`、`memory.md`、`SKILL.md`
-- `.codex/agents/`：项目级 Codex 子代理，覆盖 `Product`、`Dev`、`QA`、`Acceptance`
-- `.agents/skills/`：项目级 Codex skill，包含 AI_Team 初始化和执行入口
+- `.codex/agents/`：通过 `./scripts/company-init.sh` 按需生成的项目本地 Codex 子代理，覆盖 `Product`、`Dev`、`QA`、`Acceptance`
+- `.agents/skills/ai-team-run/`：通过 `./scripts/company-init.sh` 按需生成的项目本地执行 skill
 - `.ai_company_state/sessions/<session_id>/`：一次完整运行的全过程日志
 - `.ai_company_state/artifacts/<session_id>/`：阶段产物，如 `prd.md`、`implementation.md`、`qa_report.md`、`acceptance_report.md`、`workflow_summary.md`
 - `.ai_company_state/memory/<Role>/`：运行时学习叠加层，保存 `lessons.md`、`context_patch.md`、`skill_patch.md`
 
 ### 命令
-这些是偏底层的维护命令。正常使用时，优先在项目根目录里用 repo-scoped skills：`$ai-team-init` 和 `$ai-team-run`。
+这些是偏底层的维护命令。正常使用时，优先在项目根目录打开 Codex，先执行一次 `./scripts/company-init.sh`，后续通过 `$ai-team-run` 运行。
 
 先初始化状态目录：
 
@@ -165,23 +164,17 @@ python3 -m ai_company review
 ```
 
 ### 项目级 Codex 集成
-这个仓库现在直接内置官方 project-scoped Codex 配置：
+这个仓库支持官方 project-scoped Codex 集成，但隐藏文件改为本地按需生成，不再直接跟踪进 git：
 
-- `.codex/agents/*.toml`：`Product`、`Dev`、`QA`、`Acceptance` 的自定义子代理
-- `.codex/config.toml`：当前项目的 agent 并发/深度限制
-- `.agents/skills/ai-team-init/`：初始化 skill
-- `.agents/skills/ai-team-run/`：执行 skill
+- `.codex/agents/*.toml`：`Product`、`Dev`、`QA`、`Acceptance` 的本地子代理
+- `.agents/skills/ai-team-run/`：本地执行 skill
 
 最佳实践：
 - 在项目根目录打开 Codex
-- 优先使用 repo-scoped skill
+- 每个 clone 先执行一次 `./scripts/company-init.sh`
+- 日常执行优先使用 `$ai-team-run`
 
-推荐的 repo-scoped skill 入口：
-
-```text
-$ai-team-init
-$ai-team-run
-```
+这些生成出来的隐藏文件都被 git 忽略，所以 fresh clone 会保持干净。
 
 手动 shell 兜底：
 
@@ -269,7 +262,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/ZHOUKAILIAN/AI_Team/main/scr
 
 ### 学习闭环如何工作
 1. `Product` 把原始需求转成 PRD，并显式写出验收标准。
-2. `Dev` 基于 PRD 落实现，并把 TDD 与命令证据写入 `implementation.md`。
+2. `Dev` 基于 PRD 落实现，并把自验证与命令证据写入 `implementation.md`。
 3. `QA` 独立重跑关键验证，发现问题时输出结构化 finding。
 4. `Acceptance` 基于这些证据给出 AI 验收建议，最终 Go/No-Go 仍由人类决定。
 5. 主控 orchestrator 把 finding 定向回写到目标角色的运行时记忆层。

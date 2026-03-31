@@ -2,6 +2,8 @@
 .worktrees/
 __pycache__/
 *.pyc
+.codex/
+.agents/
 
 .ai_company_state/artifacts/*
 .ai_company_state/sessions/*
