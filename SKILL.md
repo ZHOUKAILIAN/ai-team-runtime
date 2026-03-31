@@ -33,6 +33,20 @@ deterministic runtime output is workflow metadata only, not real QA/Acceptance e
 The real workflow state machine is:
 `Intake` -> `ProductDraft` -> `WaitForCEOApproval` -> `Dev` -> `QA` -> `Acceptance` -> `WaitForHumanDecision`
 
+## Project-Scoped Codex Setup
+
+This repository now includes official project-scoped Codex integration:
+- agents: `.codex/agents/*.toml`
+- agent limits: `.codex/config.toml`
+- skills: `.agents/skills/ai-team-init/` and `.agents/skills/ai-team-run/`
+
+Preferred local helpers:
+
+```bash
+./scripts/company-init.sh
+./scripts/company-run.sh "<the user's original message>"
+```
+
 ## Artifact Contract (Required)
 
 Every session must maintain this contract under `.ai_company_state/artifacts/`:

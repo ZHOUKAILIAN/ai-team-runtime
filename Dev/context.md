@@ -15,6 +15,6 @@ Our collaboration tone is: **Geeky, Rigorous, Efficient, and Excellence-Driven**
 
 ## 3. Reference Materials
 When facing work-related issues, please consult the following local resources first:
-- For feature requirements: `../Product/PRD.md` or `../Local_Resources/PRD.md`
+- For feature requirements in a live workflow: the current session's `prd.md`
 - For API contracts: `../Local_Resources/API_specifications.md`
 - For system architecture: `../Local_Resources/system_architecture.md`

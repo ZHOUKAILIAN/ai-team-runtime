@@ -9,6 +9,13 @@ Use this skill when either of these is true:
 - the current workspace contains the AI Company runtime
 - the runtime was globally installed under `~/.codex/vendor/ai-team`
 
+If the current workspace is this repository itself, prefer the repo-scoped setup first:
+
+```bash
+./scripts/company-init.sh
+./scripts/company-run.sh "<the user's original message>"
+```
+
 ## Trigger Phrases
 
 Treat these as direct workflow execution requests:

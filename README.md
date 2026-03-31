@@ -51,7 +51,7 @@ This means:
 - A human makes the final Go/No-Go decision.
 
 Role boundaries:
-- superpower TDD belongs to Dev (implementation discipline), not QA.
+- TDD and any other Dev-only implementation discipline stay inside Dev, not QA.
 - QA must independently rerun critical verification and cannot accept Dev claims without rerun evidence.
 - missing evidence forces blocked.
 
@@ -62,13 +62,62 @@ Contract artifacts (required per session):
 - `acceptance_report.md`
 - `workflow_summary.md`
 
-Contract entry command for agent-friendly requests:
+Recommended entrypoints for normal use:
 
-```bash
-python3 -m ai_company start-session --message "<your original message>"
+```text
+$ai-team-init
+$ai-team-run
 ```
 
 *Note: All execution states, session memories, and artifact hand-offs are stored locally in the `.ai_company_state/` directory to keep the workspace clean.*
+
+## 🚀 Quick Start
+If you want to use the real repo-scoped AI_Team workflow in this repository, the recommended path is:
+
+1. Open Codex at the project root of this repository.
+
+2. Initialize the repo-scoped workflow:
+
+```text
+$ai-team-init
+```
+
+3. Run a requirement through the workflow:
+
+```text
+$ai-team-run
+```
+
+Manual fallback from the project root:
+
+```bash
+./scripts/company-init.sh
+./scripts/company-run.sh "执行这个需求：<your request>"
+```
+
+For normal use, prefer the repo-scoped skills instead of `python3 -m ai_company ...`.
+
+## ✅ What This Workflow Can Do
+This workflow is designed to run one requirement through a real multi-role handoff instead of collapsing everything into Dev-only TDD.
+
+It does all of the following:
+- Product writes `prd.md` with explicit acceptance criteria before Dev starts.
+- The workflow stops once for CEO approval after Product.
+- Dev implements and records its own TDD plus command evidence in `implementation.md`.
+- QA independently reruns critical verification and writes `qa_report.md`.
+- QA can automatically send failures back to Dev for rework.
+- Acceptance writes `acceptance_report.md` as an AI recommendation only.
+- A human still makes the final Go/No-Go decision.
+
+## 🧾 Recording And Storage
+Yes, the workflow records every session locally.
+
+Main storage locations:
+- `.ai_company_state/artifacts/<session_id>/`: required handoff artifacts such as `prd.md`, `implementation.md`, `qa_report.md`, `acceptance_report.md`, and `workflow_summary.md`
+- `.ai_company_state/sessions/<session_id>/`: per-stage journals, findings, metadata, and `review.md`
+- `.ai_company_state/memory/<Role>/`: learned lessons and patches written back from downstream findings
+
+`workflow_summary.md` is the quickest single-file index for the current session state and artifact paths.
 
 ## Local Runtime And Learning Loop
 This repository now includes a runnable local workflow engine. Its workflow metadata aligns with:
@@ -82,15 +131,25 @@ Compared with the original document-only workflow, the runtime adds three concre
 
 ### Directory Layout
 - `Product/`, `Dev/`, `QA/`, `Acceptance/`, `Ops/`: seed role definitions with `context.md`, `memory.md`, and `SKILL.md`
+- `.codex/agents/`: project-scoped Codex subagents for `Product`, `Dev`, `QA`, and `Acceptance`
+- `.agents/skills/`: project-scoped Codex skills for AI_Team initialization and execution
 - `.ai_company_state/sessions/<session_id>/`: per-run journals and review artifacts
 - `.ai_company_state/artifacts/<session_id>/`: stage deliverables such as `prd.md`, `implementation.md`, `qa_report.md`, `acceptance_report.md`, and `workflow_summary.md`
 - `.ai_company_state/memory/<Role>/`: runtime learning overlays containing `lessons.md`, `context_patch.md`, and `skill_patch.md`
 
 ### Commands
+These are low-level maintainer commands. Normal use should prefer the repo-scoped skills from the project root (`$ai-team-init` and `$ai-team-run`).
+
 Initialize the local state directories:
 
 ```bash
 python3 -m ai_company init-state
+```
+
+Initialize the repo-scoped Codex workflow setup:
+
+```bash
+python3 -m ai_company codex-init
 ```
 
 Run a full workflow loop (`run` and `agent-run` are deterministic/demo runtime commands):
@@ -103,6 +162,32 @@ Read the latest review:
 
 ```bash
 python3 -m ai_company review
+```
+
+### Project-Scoped Codex Setup
+This repository now ships with official project-scoped Codex integration:
+
+- `.codex/agents/*.toml`: custom subagents for Product, Dev, QA, and Acceptance
+- `.codex/config.toml`: per-project agent limits
+- `.agents/skills/ai-team-init/`: init skill
+- `.agents/skills/ai-team-run/`: execution skill
+
+Best practice:
+- open Codex at the project root
+- use repo-scoped skills first
+
+Preferred repo-scoped skill entrypoints:
+
+```text
+$ai-team-init
+$ai-team-run
+```
+
+Manual shell fallback:
+
+```bash
+./scripts/company-init.sh
+./scripts/company-run.sh "执行这个需求：做一个支持下游纠偏和自学习的 AI 公司流程"
 ```
 
 ### agent-friendly Mode
@@ -132,7 +217,7 @@ python3 -m ai_company start-session --message "<your original message>"
 ```
 
 ### Install As A Codex Skill
-If you want to reuse this in future Codex sessions, install the bundled skill from this repository:
+If you want to reuse this outside this repository, install the bundled global skill from this repository:
 
 ```bash
 ./scripts/install-codex-skill.sh
@@ -148,11 +233,7 @@ After that, you can tell Codex:
 - `/company-run build a self-improving AI company loop`
 - `执行这个需求：做一个支持下游纠偏和自学习的 AI 公司流程`
 
-The installed skill is the trigger/router layer. The actual execution goes through:
-
-```bash
-python3 -m ai_company start-session --message "<your original message>"
-```
+The installed global skill is the trigger/router layer. The user-facing entrypoint remains the skill itself, while the helper script handles bootstrap internally.
 
 ### One-Command Global Install
 For teammates on another machine, prefer the global installer. It does both:
@@ -189,14 +270,15 @@ The installed skill will prefer this helper:
 
 ### How The Learning Loop Works
 1. `Product` turns the raw request into a PRD with explicit acceptance criteria.
-2. `Dev` converts the PRD into a technical plan.
-3. `QA` checks the handoff quality and emits structured findings when something is missing.
-4. `Acceptance` uses those findings to produce the final recommendation for the human Go/No-Go decision.
+2. `Dev` implements against the PRD and records TDD plus command evidence in `implementation.md`.
+3. `QA` independently reruns critical verification and emits structured findings when something is missing.
+4. `Acceptance` uses those findings to produce the final AI recommendation for the human Go/No-Go decision.
 5. The orchestrator writes the findings back into the target role's runtime learning overlay.
 6. The next run automatically loads those learned overlays into the role's effective context, skill, and memory.
 
 ### Current Boundary
 - The default backend is a deterministic template backend. It is suitable for validating the orchestration model, memory evolution, diff audit, and review flow.
+- Its `acceptance_status` values are recommendation-only (`recommended_go`, `recommended_no_go`, or `blocked`) and the workflow summary ends at `WaitForHumanDecision`, not final release approval.
 - If you want `Dev` to call a real LLM to modify code, or `QA` to run a browser/test suite, you can replace the backend without rewriting the orchestrator, state store, or learning loop.
 
 ---

@@ -1,6 +1,6 @@
 # AI Company Autoloop Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+> **Implementation note:** Execute this plan task-by-task using the development workflow available in your environment.
 
 **Goal:** Build a local, runnable workflow engine that orchestrates Product -> Dev -> QA -> Acceptance, persists per-agent context and memory, records full execution history, computes artifact diffs, and feeds downstream findings back into agent learning records.
 

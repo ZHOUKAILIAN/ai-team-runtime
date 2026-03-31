@@ -51,7 +51,7 @@
 - 最终 Go/No-Go 由人类决策。
 
 角色边界：
-- superpower TDD 归 Dev，不归 QA。
+- TDD 以及其他仅属于 Dev 的实现纪律都归 Dev，不归 QA。
 - QA 必须独立重跑关键验证，不能只接受 Dev 的口头结论。
 - 缺少证据必须 blocked。
 
@@ -62,13 +62,62 @@
 - `acceptance_report.md`
 - `workflow_summary.md`
 
-agent-friendly 请求的契约入口命令：
+正常使用时推荐的入口：
 
-```bash
-python3 -m ai_company start-session --message "<你的原话>"
+```text
+$ai-team-init
+$ai-team-run
 ```
 
 *注：所有角色的上下文记忆、交接文档与会话日志均存放在 `.ai_company_state/` 私有目录，实现与代码仓库的物理隔离。*
+
+## 🚀 快速启动
+如果你要在这个仓库里使用真正的项目级 AI_Team 工作流，推荐这样启动：
+
+1. 先确保 Codex 是在这个仓库的项目根目录打开的。
+
+2. 先初始化项目级 workflow：
+
+```text
+$ai-team-init
+```
+
+3. 再把一个需求丢进流程：
+
+```text
+$ai-team-run
+```
+
+如果你更喜欢 shell，也可以在项目根目录下执行：
+
+```bash
+./scripts/company-init.sh
+./scripts/company-run.sh "执行这个需求：<你的需求>"
+```
+
+正常使用时，优先走 skill，不建议让用户自己执行 `python3 -m ai_company ...`。
+
+## ✅ 这套流程能做什么
+这套流程的目标，是把一个需求真正跑过多角色交接，而不是退化成只有 Dev 的 TDD。
+
+它会做这些事：
+- Product 先写 `prd.md`，并在进入 Dev 之前把验收标准写清楚。
+- Product 完成后，流程会停一次，等 CEO 批准。
+- Dev 负责实现，并把自己的 TDD 和命令证据写进 `implementation.md`。
+- QA 必须独立重跑关键验证，并把结果写进 `qa_report.md`。
+- 如果 QA 失败，会自动回到 Dev 修复后再重测。
+- Acceptance 只输出 AI 验收建议，写入 `acceptance_report.md`。
+- 最终 Go/No-Go 仍然由人来决定。
+
+## 🧾 会不会记录，记录放哪里
+会，这套流程会把每次 session 的记录都落到本地。
+
+主要存储位置：
+- `.ai_company_state/artifacts/<session_id>/`：本轮必须交接的产物，比如 `prd.md`、`implementation.md`、`qa_report.md`、`acceptance_report.md`、`workflow_summary.md`
+- `.ai_company_state/sessions/<session_id>/`：每个阶段的 journal、findings、元数据，以及 `review.md`
+- `.ai_company_state/memory/<Role>/`：从下游 finding 回写的 lessons 和 patch
+
+如果你想最快看懂这一轮当前跑到哪，先看 `workflow_summary.md`。
 
 ## 🧠 本地运行时与学习闭环
 当前仓库已经内置一个可执行的本地 workflow engine，其元数据链路与以下契约一致：
@@ -82,15 +131,25 @@ python3 -m ai_company start-session --message "<你的原话>"
 
 ### 目录说明
 - `Product/`、`Dev/`、`QA/`、`Acceptance/`、`Ops/`：角色的种子身份定义，包含 `context.md`、`memory.md`、`SKILL.md`
+- `.codex/agents/`：项目级 Codex 子代理，覆盖 `Product`、`Dev`、`QA`、`Acceptance`
+- `.agents/skills/`：项目级 Codex skill，包含 AI_Team 初始化和执行入口
 - `.ai_company_state/sessions/<session_id>/`：一次完整运行的全过程日志
 - `.ai_company_state/artifacts/<session_id>/`：阶段产物，如 `prd.md`、`implementation.md`、`qa_report.md`、`acceptance_report.md`、`workflow_summary.md`
 - `.ai_company_state/memory/<Role>/`：运行时学习叠加层，保存 `lessons.md`、`context_patch.md`、`skill_patch.md`
 
 ### 命令
+这些是偏底层的维护命令。正常使用时，优先在项目根目录里用 repo-scoped skills：`$ai-team-init` 和 `$ai-team-run`。
+
 先初始化状态目录：
 
 ```bash
 python3 -m ai_company init-state
+```
+
+初始化项目级 Codex workflow 配置：
+
+```bash
+python3 -m ai_company codex-init
 ```
 
 运行一次完整闭环（`run` 和 `agent-run` 是确定性/演示 runtime 命令）：
@@ -103,6 +162,32 @@ python3 -m ai_company run --request "实现一个可以持续自学习的 AI 公
 
 ```bash
 python3 -m ai_company review
+```
+
+### 项目级 Codex 集成
+这个仓库现在直接内置官方 project-scoped Codex 配置：
+
+- `.codex/agents/*.toml`：`Product`、`Dev`、`QA`、`Acceptance` 的自定义子代理
+- `.codex/config.toml`：当前项目的 agent 并发/深度限制
+- `.agents/skills/ai-team-init/`：初始化 skill
+- `.agents/skills/ai-team-run/`：执行 skill
+
+最佳实践：
+- 在项目根目录打开 Codex
+- 优先使用 repo-scoped skill
+
+推荐的 repo-scoped skill 入口：
+
+```text
+$ai-team-init
+$ai-team-run
+```
+
+手动 shell 兜底：
+
+```bash
+./scripts/company-init.sh
+./scripts/company-run.sh "执行这个需求：做一个支持下游纠偏和自学习的 AI 公司流程"
 ```
 
 ### agent-friendly 模式
@@ -131,7 +216,7 @@ python3 -m ai_company start-session --message "<你的原话>"
 ```
 
 ### 安装成 Codex Skill
-如果你想后面在别的 Codex 会话里复用这套能力，直接安装仓库内置 skill：
+如果你想在这个仓库之外复用，直接安装仓库内置的全局 skill：
 
 ```bash
 ./scripts/install-codex-skill.sh
@@ -147,11 +232,7 @@ python3 -m ai_company start-session --message "<你的原话>"
 - `/company-run 做一个支持下游纠偏和自学习的 AI 公司流程`
 - `执行这个需求：做一个支持下游纠偏和自学习的 AI 公司流程`
 
-这个 skill 的职责是触发和路由，真正执行会走：
-
-```bash
-python3 -m ai_company start-session --message "<你的原话>"
-```
+这个全局 skill 的职责是触发和路由。对用户来说，入口仍然是 skill 本身，bootstrap 会由 helper script 在内部处理。
 
 ### 一键全局安装
 如果是别的小伙伴在另一台电脑上安装，推荐直接走一键安装脚本。它会同时做两件事：
@@ -188,14 +269,15 @@ bash <(curl -fsSL https://raw.githubusercontent.com/ZHOUKAILIAN/AI_Team/main/scr
 
 ### 学习闭环如何工作
 1. `Product` 把原始需求转成 PRD，并显式写出验收标准。
-2. `Dev` 基于 PRD 产出技术方案。
-3. `QA` 检查交接质量，发现问题时输出结构化 finding。
-4. `Acceptance` 基于 finding 产出最终建议，由人类做 Go/No-Go 决策。
+2. `Dev` 基于 PRD 落实现，并把 TDD 与命令证据写入 `implementation.md`。
+3. `QA` 独立重跑关键验证，发现问题时输出结构化 finding。
+4. `Acceptance` 基于这些证据给出 AI 验收建议，最终 Go/No-Go 仍由人类决定。
 5. 主控 orchestrator 把 finding 定向回写到目标角色的运行时记忆层。
 6. 下一轮加载角色时，会自动把这些学习记录叠加进有效 context / skill / memory，形成持续增强。
 
 ### 当前边界
 - 默认 backend 是**确定性模板后端**，适合演示流程、记忆演进、diff 和 review。
+- 它输出的 `acceptance_status` 只是建议态（`recommended_go`、`recommended_no_go`、`blocked`），workflow summary 最终会停在 `WaitForHumanDecision`，不是最终发布批准。
 - 如果要让 `Dev` 阶段真的调用 LLM 去改代码、让 `QA` 跑真实浏览器或测试套件，可以在此 runtime 之上替换 backend，而不需要重写主控、状态存储和学习闭环。
 
 ---

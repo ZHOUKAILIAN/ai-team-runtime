@@ -8,6 +8,7 @@ def render_workflow_summary(summary: WorkflowSummary) -> str:
         "# Workflow Summary",
         "",
         f"- session_id: {summary.session_id}",
+        f"- runtime_mode: {summary.runtime_mode}",
         f"- current_state: {summary.current_state}",
         f"- current_stage: {summary.current_stage}",
         f"- prd_status: {summary.prd_status}",

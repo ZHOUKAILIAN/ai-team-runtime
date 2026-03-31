@@ -23,6 +23,7 @@ class StateTests(unittest.TestCase):
             workflow_summary = Path(temp_dir) / "artifacts" / session.session_id / "workflow_summary.md"
             self.assertTrue(workflow_summary.exists())
             summary_text = workflow_summary.read_text()
+            self.assertIn("- runtime_mode: session_bootstrap", summary_text)
             self.assertIn("- current_state: Intake", summary_text)
             self.assertIn("- current_stage: Intake", summary_text)
             self.assertIn("- prd_status: pending", summary_text)

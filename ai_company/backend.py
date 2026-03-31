@@ -34,7 +34,15 @@ class StaticBackend:
         acceptance_report: str,
         findings: list[dict[str, str]],
     ) -> "StaticBackend":
-        acceptance_status = "rejected" if "reject" in acceptance_report.lower() or findings else "accepted"
+        normalized_report = acceptance_report.lower()
+        if "blocked" in normalized_report:
+            acceptance_status = "blocked"
+        elif "no-go" in normalized_report or "reject" in normalized_report:
+            acceptance_status = "recommended_no_go"
+        elif findings:
+            acceptance_status = "blocked"
+        else:
+            acceptance_status = "recommended_go"
         return cls(
             stage_payloads={
                 "Product": {
@@ -58,7 +66,7 @@ class StaticBackend:
                 },
                 "Acceptance": {
                     "artifact_content": acceptance_report,
-                    "journal": "# Acceptance Journal\n\nRecorded the final sign-off decision.\n",
+                    "journal": "# Acceptance Journal\n\nRecorded the AI acceptance recommendation for the human decision maker.\n",
                     "acceptance_status": acceptance_status,
                 },
             }
@@ -109,19 +117,38 @@ class DeterministicBackend:
         guardrails = _memory_highlights(role)
         artifact_content = (
             "# Product PRD\n\n"
+            "## Raw Request\n"
+            f"{request.strip()}\n\n"
             "## Problem Statement\n"
             f"{request.strip()}\n\n"
             "## Goals\n"
             "- Convert the request into a workflow-ready deliverable.\n"
-            "- Make downstream QA and Acceptance checks auditable.\n\n"
-            "## Scope\n"
-            "- Product stage produces an explicit PRD.\n"
-            "- Dev stage produces a technical plan.\n"
-            "- QA and Acceptance can send issues upstream.\n\n"
+            "- Make downstream QA and Acceptance checks auditable.\n"
+            "- Clarify acceptance before Dev starts.\n\n"
+            "## Non-Goals\n"
+            "- Final human Go/No-Go decision.\n"
+            "- Replacing QA or Acceptance with Dev self-verification.\n\n"
+            "## User Scenarios\n"
+            "- A stakeholder submits a requirement and expects a structured PRD.\n"
+            "- Dev needs explicit acceptance criteria before implementation starts.\n"
+            "- QA and Acceptance need traceable expectations for independent verification.\n\n"
             "## Acceptance Criteria\n"
-            "- Every stage writes an artifact and a journal.\n"
-            "- Downstream findings update learned memory overlays.\n"
-            "- Final review includes diffs and proposed improvements.\n\n"
+            "- Product writes a PRD with explicit acceptance criteria before Dev starts.\n"
+            "- Dev, QA, and Acceptance each write their own session-scoped handoff artifact.\n"
+            "- QA independently reruns critical verification and records evidence.\n"
+            "- Acceptance outputs an AI recommendation, then waits for a human Go/No-Go decision.\n\n"
+            "## QA Verification Focus\n"
+            "- Validate that acceptance criteria are measurable.\n"
+            "- Confirm Dev exposes enough concrete verification evidence for rerun.\n\n"
+            "## Acceptance Verification Focus\n"
+            "- Validate user-visible behavior against the PRD.\n"
+            "- Block when product-level evidence is missing.\n\n"
+            "## Risks And Assumptions\n"
+            "- This deterministic backend only demonstrates artifact structure, not real repository verification.\n"
+            "- Human approval checkpoints still need to happen outside this demo backend.\n\n"
+            "## CEO Confirmation Questions\n"
+            "- Are the drafted acceptance criteria complete enough for Dev to start?\n"
+            "- Are there any non-goals or constraints that should be added before implementation?\n\n"
             "## Learned Guardrails\n"
             f"{guardrails}\n"
         )
@@ -150,17 +177,28 @@ class DeterministicBackend:
     ) -> StageOutput:
         prd = stage_artifacts.get("Product", "")
         artifact_content = (
-            "# Dev Technical Plan\n\n"
-            "## Source PRD\n"
+            "# Implementation\n\n"
+            "## Implementation Target\n"
             f"{_excerpt(prd)}\n\n"
-            "## Architecture\n"
+            "## Change Summary\n"
             "- Load role context, base memory, and learned overlay memory.\n"
             "- Persist sessions, artifacts, journals, findings, and reviews under `.ai_company_state/`.\n"
             "- Keep learned context and skill updates as auditable overlays instead of mutating seed files.\n\n"
-            "## Test Strategy\n"
-            "- Verify CLI entrypoints.\n"
-            "- Verify session creation and artifact persistence.\n"
-            "- Verify downstream findings update the target role learning records.\n"
+            "## Changed Files\n"
+            "- Demo backend placeholder: no repository files were modified by the deterministic runtime.\n\n"
+            "## TDD Evidence\n"
+            "- Demo backend placeholder: real Dev runs must attach failing test, implementation, and passing verification evidence here.\n\n"
+            "## Commands Executed\n"
+            "- Demo backend placeholder: no real commands were executed.\n\n"
+            "## Command Result Summary\n"
+            "- Deterministic runtime generated structure only; QA must not treat this as independent evidence.\n\n"
+            "## Known Limitations\n"
+            "- No real code changes or test reruns occurred in this backend.\n\n"
+            "## QA Regression Checklist\n"
+            "- Re-run the workflow entrypoints and artifact persistence checks in a real session.\n"
+            "- Independently verify any repository changes before reporting passed.\n\n"
+            "## QA Finding To Fix Mapping\n"
+            "- No QA rework mapping in the initial demo pass.\n"
         )
         journal = (
             "# Dev Journal\n\n"
@@ -201,32 +239,52 @@ class DeterministicBackend:
                 )
             )
 
-        if "Test Strategy" not in tech_spec:
+        if "QA Regression Checklist" not in tech_spec:
             qa_findings.append(
                 Finding(
                     source_stage="QA",
                     target_stage="Dev",
-                    issue="Dev technical plan is missing a test strategy.",
+                    issue="Dev implementation handoff is missing a QA regression checklist.",
                     severity="medium",
-                    lesson="Include a concrete test strategy in the technical plan.",
-                    proposed_context_update="Every technical plan must define how QA verifies it.",
+                    lesson="Include a concrete QA rerun checklist in the implementation handoff.",
+                    proposed_context_update="Every implementation handoff must define how QA reruns critical verification.",
                 )
             )
 
-        status = "passed" if not qa_findings else "rejected"
+        qa_findings.append(
+            Finding(
+                source_stage="QA",
+                target_stage="",
+                issue="Deterministic demo runtime did not execute real independent verification commands.",
+                severity="high",
+                evidence="demo_only_runtime",
+            )
+        )
+
+        status = "blocked"
         artifact_content = (
             "# QA Report\n\n"
-            f"status: {status}\n\n"
-            "## Checks\n"
-            "- Product artifact includes explicit acceptance criteria.\n"
-            "- Dev artifact includes a test strategy and persistence plan.\n\n"
-            "## Findings\n"
+            "## QA Objective For This Round\n"
+            "- Confirm the Product and Dev handoff is independently verifiable.\n\n"
+            "## Independently Executed Commands\n"
+            "- Demo runtime only: reviewed generated PRD and implementation artifact content.\n"
+            "- Demo runtime only: no real repository commands were executed.\n\n"
+            "## Observed Results\n"
+            "- Product artifact includes explicit acceptance criteria only if the generated PRD contains that section.\n"
+            "- Dev artifact is acceptable only if it documents a concrete verification strategy.\n\n"
+            "## Failures Or Risks\n"
+            f"{_format_findings(qa_findings)}\n\n"
+            "## PRD Acceptance Criteria Mapping\n"
+            "- Artifact contract present: checked via generated session artifacts.\n"
+            "- Independent verification evidence present: blocked in demo mode because no real rerun evidence exists.\n\n"
+            f"## Decision\n{status}\n\n"
+            "## Defects Returned To Dev\n"
             f"{_format_findings(qa_findings)}\n"
         )
         journal = (
             "# QA Journal\n\n"
             "## Verification Notes\n"
-            "- Compared PRD and technical plan for downstream testability.\n"
+            "- Compared PRD and implementation handoff for downstream testability.\n"
             "- Emitted structured findings only when a handoff gap was visible.\n"
         )
         return StageOutput(
@@ -245,20 +303,30 @@ class DeterministicBackend:
         stage_artifacts: dict[str, str],
         findings: list[Finding],
     ) -> StageOutput:
-        acceptance_status = "accepted" if not findings else "rejected"
+        acceptance_status = "recommended_go" if not findings else "blocked"
         artifact_content = (
             "# Acceptance Report\n\n"
-            f"acceptance_status: {acceptance_status}\n\n"
-            "## Decision\n"
-            f"{'The workflow passed the acceptance gate.' if acceptance_status == 'accepted' else 'The workflow is blocked by open downstream findings.'}\n\n"
-            "## Open Findings\n"
-            f"{_format_findings(findings)}\n"
+            "## Acceptance Inputs\n"
+            "- PRD artifact from Product.\n"
+            "- QA report from the latest QA round.\n"
+            "- Demo-only implementation artifact from Dev.\n\n"
+            "## Criterion-By-Criterion Judgment\n"
+            "- Product supplied acceptance criteria: yes.\n"
+            "- QA independently reran critical verification: no, this deterministic backend cannot prove that.\n"
+            "- Human Go/No-Go already provided: no.\n\n"
+            "## Product-Level Observations\n"
+            "- The deterministic runtime demonstrates artifact flow, not user-visible product validation.\n\n"
+            "## Remaining Risks\n"
+            f"{_format_findings(findings)}\n\n"
+            f"## Recommendation\n{acceptance_status}\n\n"
+            "## Recommendation To CEO\n"
+            f"{'AI Acceptance recommends waiting for the human Go/No-Go decision after real QA evidence is attached.' if acceptance_status == 'recommended_go' else 'AI Acceptance recommends blocking the workflow until unresolved downstream findings are cleared with real evidence.'}\n"
         )
         journal = (
             "# Acceptance Journal\n\n"
             "## Review Summary\n"
-            "- Verified that the workflow produced all required artifacts.\n"
-            "- Used downstream findings as the release gate.\n"
+            "- Verified that the workflow produced the required artifact set.\n"
+            "- Produced an AI recommendation only; the human still owns final Go/No-Go.\n"
         )
         return StageOutput(
             stage="Acceptance",

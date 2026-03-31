@@ -45,7 +45,7 @@ class OrchestratorTests(unittest.TestCase):
 
             learned_memory = (state_root / "memory" / "Product" / "lessons.md").read_text()
 
-            self.assertEqual(result.acceptance_status, "rejected")
+            self.assertEqual(result.acceptance_status, "recommended_no_go")
             self.assertIn("Enumerate CRUD scope explicitly.", learned_memory)
             self.assertTrue((state_root / "sessions" / result.session_id / "review.md").exists())
 
@@ -85,12 +85,13 @@ class OrchestratorTests(unittest.TestCase):
             summary_path = state_root / "artifacts" / result.session_id / "workflow_summary.md"
             summary = summary_path.read_text()
 
-            self.assertIn("- current_state: Completed", summary)
+            self.assertIn("- runtime_mode: deterministic_demo", summary)
+            self.assertIn("- current_state: WaitForHumanDecision", summary)
             self.assertIn("- current_stage: Acceptance", summary)
-            self.assertIn("- prd_status: completed", summary)
+            self.assertIn("- prd_status: drafted", summary)
             self.assertIn("- dev_status: completed", summary)
-            self.assertIn("- qa_status: completed", summary)
-            self.assertIn("- acceptance_status: rejected", summary)
+            self.assertIn("- qa_status: blocked", summary)
+            self.assertIn("- acceptance_status: recommended_no_go", summary)
 
     def test_review_includes_workflow_status_from_orchestrator_run(self) -> None:
         from ai_company.backend import StaticBackend
@@ -127,12 +128,13 @@ class OrchestratorTests(unittest.TestCase):
             review = review_path.read_text()
 
             self.assertIn("## Workflow Status", review)
-            self.assertIn("current_state: Completed", review)
+            self.assertIn("runtime_mode: deterministic_demo", review)
+            self.assertIn("current_state: WaitForHumanDecision", review)
             self.assertIn("current_stage: Acceptance", review)
-            self.assertIn("prd_status: completed", review)
+            self.assertIn("prd_status: drafted", review)
             self.assertIn("dev_status: completed", review)
-            self.assertIn("qa_status: completed", review)
-            self.assertIn("acceptance_status: rejected", review)
+            self.assertIn("qa_status: blocked", review)
+            self.assertIn("acceptance_status: recommended_no_go", review)
             self.assertIn("human_decision: pending", review)
             self.assertIn("qa_round: 0", review)
 

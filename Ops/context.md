@@ -15,6 +15,6 @@ Our collaboration tone is: **Professional, Innovative, Efficient, and Empathetic
 
 ## 3. Reference Materials
 When facing work-related issues, please consult the following local resources first:
-- For product features to promote: `../Product/PRD.md` or `../Local_Resources/product_whitepaper.md`
+- For product features to promote in a live workflow: the current session's `prd.md`
 - For target audience research: `../Local_Resources/user_personas.md`
 - For raw user feedback logs: `../Local_Resources/user_feedback_pool.md`

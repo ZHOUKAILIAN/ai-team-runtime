@@ -85,6 +85,7 @@ class SessionRecord:
 @dataclass(slots=True)
 class WorkflowSummary:
     session_id: str
+    runtime_mode: str
     current_state: str
     current_stage: str
     prd_status: str = "pending"
@@ -99,6 +100,7 @@ class WorkflowSummary:
     def to_dict(self) -> dict[str, Any]:
         return {
             "session_id": self.session_id,
+            "runtime_mode": self.runtime_mode,
             "current_state": self.current_state,
             "current_stage": self.current_stage,
             "prd_status": self.prd_status,

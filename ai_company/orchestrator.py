@@ -9,6 +9,7 @@ from .roles import load_role_profiles
 from .state import StateStore
 
 DEFAULT_STAGE_ORDER = ("Product", "Dev", "QA", "Acceptance")
+DETERMINISTIC_DEMO_MODE = "deterministic_demo"
 
 
 class WorkflowOrchestrator:
@@ -26,7 +27,7 @@ class WorkflowOrchestrator:
         self.stage_order = stage_order
 
     def run(self, *, request: str) -> WorkflowResult:
-        session = self.state_store.create_session(request)
+        session = self.state_store.create_session(request, runtime_mode=DETERMINISTIC_DEMO_MODE)
         roles = load_role_profiles(self.repo_root, self.state_store.root)
         stage_artifacts: dict[str, str] = {}
         stage_records = []
@@ -34,6 +35,7 @@ class WorkflowOrchestrator:
         acceptance_status = "pending"
         summary = WorkflowSummary(
             session_id=session.session_id,
+            runtime_mode=DETERMINISTIC_DEMO_MODE,
             current_state="In Progress",
             current_stage="Intake",
             artifact_paths={
@@ -54,16 +56,25 @@ class WorkflowOrchestrator:
             stage_artifacts[stage] = output.artifact_content
             stage_record = self.state_store.record_stage(session, output)
             stage_records.append(stage_record)
-            summary.current_stage = stage
             summary.artifact_paths[stage.lower()] = str(stage_record.artifact_path)
             if stage == "Product":
-                summary.prd_status = "completed"
+                summary.current_state = "WaitForCEOApproval"
+                summary.current_stage = "ProductDraft"
+                summary.prd_status = "drafted"
             elif stage == "Dev":
+                summary.current_state = "Dev"
+                summary.current_stage = "Dev"
                 summary.dev_status = "completed"
             elif stage == "QA":
-                summary.qa_status = "completed"
+                summary.current_state = "QA"
+                summary.current_stage = "QA"
+                summary.qa_status = "passed" if not output.findings else "blocked"
             elif stage == "Acceptance" and output.acceptance_status:
+                summary.current_state = "WaitForHumanDecision"
+                summary.current_stage = "Acceptance"
                 summary.acceptance_status = output.acceptance_status
+                if output.acceptance_status == "blocked":
+                    summary.blocked_reason = "Deterministic demo runtime surfaced unresolved downstream findings."
             self.state_store.save_workflow_summary(session, summary)
 
             for finding in output.findings:
@@ -74,9 +85,12 @@ class WorkflowOrchestrator:
                 acceptance_status = output.acceptance_status
 
         if acceptance_status == "pending":
-            acceptance_status = "accepted" if not findings else "rejected"
-        summary.current_state = "Completed"
+            acceptance_status = "recommended_go" if not findings else "blocked"
+        summary.current_state = "WaitForHumanDecision"
+        summary.current_stage = "Acceptance"
         summary.acceptance_status = acceptance_status
+        if acceptance_status == "blocked" and not summary.blocked_reason:
+            summary.blocked_reason = "Deterministic demo runtime ended with unresolved findings."
         self.state_store.save_workflow_summary(session, summary)
 
         review = build_session_review(

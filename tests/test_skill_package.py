@@ -35,6 +35,9 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("QA", content)
         self.assertIn("Acceptance", content)
         self.assertIn("WaitForHumanDecision", content)
+        self.assertIn(".codex/agents/*.toml", content)
+        self.assertIn("./scripts/company-init.sh", content)
+        self.assertIn("./scripts/company-run.sh", content)
         self.assertIn("prd.md", content)
         self.assertIn("implementation.md", content)
         self.assertIn("qa_report.md", content)
@@ -66,6 +69,8 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("name: ai-company-workflow", content)
         self.assertIn("/company-run", content)
         self.assertIn("company-run.sh", content)
+        self.assertIn("./scripts/company-init.sh", content)
+        self.assertIn("./scripts/company-run.sh", content)
         self.assertIn("Intake", content)
         self.assertIn("ProductDraft", content)
         self.assertIn("WaitForCEOApproval", content)
@@ -113,6 +118,19 @@ class SkillPackageTests(unittest.TestCase):
         for line in follow_through_lines:
             self.assertIn(line, root_content)
             self.assertIn(line, packaged_content)
+
+    def test_project_scoped_codex_agents_and_skills_exist(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+
+        self.assertTrue((repo_root / ".codex" / "config.toml").exists())
+        self.assertTrue((repo_root / ".codex" / "agents" / "ai_team_product.toml").exists())
+        self.assertTrue((repo_root / ".codex" / "agents" / "ai_team_dev.toml").exists())
+        self.assertTrue((repo_root / ".codex" / "agents" / "ai_team_qa.toml").exists())
+        self.assertTrue((repo_root / ".codex" / "agents" / "ai_team_acceptance.toml").exists())
+        self.assertTrue((repo_root / ".agents" / "skills" / "ai-team-init" / "SKILL.md").exists())
+        self.assertTrue((repo_root / ".agents" / "skills" / "ai-team-run" / "SKILL.md").exists())
+        self.assertTrue((repo_root / "scripts" / "company-init.sh").exists())
+        self.assertTrue((repo_root / "scripts" / "company-run.sh").exists())
 
     def test_installable_skill_front_matter_is_valid_yaml(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]

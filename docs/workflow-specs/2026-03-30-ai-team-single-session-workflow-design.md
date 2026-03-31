@@ -9,17 +9,17 @@ This design replaces the current "deterministic template backend" execution mode
 The goal is not to simulate a non-existent `agent_team` runtime. The goal is to make AI_Team work reliably in Codex as it actually exists today:
 
 - one active Codex session
-- strong global `superpower` process discipline
+- strong engineering discipline inside the active Codex session
 - no native multi-agent company abstraction
 
-In this design, AI_Team owns workflow governance, role boundaries, approvals, and release gates. `superpower` remains active inside the `Dev` stage as the engineering method, especially for TDD. `QA` and `Acceptance` become explicit downstream gates that must independently justify their conclusions with real evidence.
+In this design, AI_Team owns workflow governance, role boundaries, approvals, and release gates. The `Dev` stage may use whatever engineering workflow is available in the operator's environment, while `QA` and `Acceptance` remain explicit downstream gates that must independently justify their conclusions with real evidence.
 
 ## Goals
 
 - Make AI_Team run as a real single-session, multi-role workflow in Codex.
 - Require acceptance criteria to be explicit before implementation starts.
 - Stop after `Product` so the human CEO can approve the PRD and acceptance criteria.
-- Allow `Dev` to use `superpower` TDD as an internal implementation discipline.
+- Allow `Dev` to use TDD or any other available engineering workflow as an internal implementation discipline.
 - Require `QA` to independently rerun critical verification instead of accepting `Dev` evidence at face value.
 - Require `Acceptance` to perform product-level validation against the PRD and produce a recommendation, not the final human decision.
 - Persist every stage handoff as auditable files.
@@ -205,7 +205,7 @@ Outputs:
 Responsibilities:
 
 - implement the approved scope
-- use `superpower` process discipline for engineering work
+- use rigorous engineering discipline for implementation work
 - use TDD inside the Dev stage where applicable
 - document exactly what changed and how it was self-verified
 
@@ -402,7 +402,7 @@ Gate:
 
 ## Relationship With Superpower
 
-AI_Team and `superpower` are not competing systems in this design.
+AI_Team and any external Dev workflow are not competing systems in this design.
 
 ### AI_Team Owns
 
@@ -422,7 +422,7 @@ AI_Team and `superpower` are not competing systems in this design.
 
 ### Boundary Rule
 
-`superpower` TDD is part of `Dev`. It strengthens implementation quality, but it does not collapse the downstream workflow. `QA` and `Acceptance` remain separate mandatory gates.
+TDD or any other Dev-side engineering workflow strengthens implementation quality, but it does not collapse the downstream workflow. `QA` and `Acceptance` remain separate mandatory gates.
 
 ## Runtime Integration Plan
 

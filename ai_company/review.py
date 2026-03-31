@@ -82,6 +82,7 @@ def _build_workflow_status_section(workflow_summary: WorkflowSummary) -> list[st
     return [
         "## Workflow Status",
         "",
+        f"runtime_mode: {workflow_summary.runtime_mode}",
         f"current_state: {workflow_summary.current_state}",
         f"current_stage: {workflow_summary.current_stage}",
         f"prd_status: {workflow_summary.prd_status}",

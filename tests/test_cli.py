@@ -26,6 +26,7 @@ class CliTests(unittest.TestCase):
         self.assertIn("review", result.stdout)
         self.assertIn("agent-run", result.stdout)
         self.assertIn("start-session", result.stdout)
+        self.assertIn("codex-init", result.stdout)
 
     def test_agent_run_accepts_raw_user_message(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
@@ -131,6 +132,37 @@ class CliTests(unittest.TestCase):
             "Create a session scaffold for the single-session AI_Team workflow.",
             result.stdout,
         )
+
+    def test_codex_init_reports_project_scoped_codex_setup(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+
+        with TemporaryDirectory(dir=local_temp_dir()) as temp_dir:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "ai_company",
+                    "--repo-root",
+                    str(repo_root),
+                    "--state-root",
+                    temp_dir,
+                    "codex-init",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("state_root:", result.stdout)
+        self.assertIn(".codex/config.toml", result.stdout)
+        self.assertIn(".codex/agents", result.stdout)
+        self.assertIn(".agents/skills/ai-team-run/SKILL.md", result.stdout)
+        self.assertIn("project_root:", result.stdout)
+        self.assertIn("recommended_context:", result.stdout)
+        self.assertIn("$ai-team-init", result.stdout)
+        self.assertIn("$ai-team-run", result.stdout)
+        self.assertIn("manual_run_fallback:", result.stdout)
 
 
 if __name__ == "__main__":

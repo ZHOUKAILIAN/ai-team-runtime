@@ -37,6 +37,7 @@ class ReviewTests(unittest.TestCase):
             findings=[],
             workflow_summary=WorkflowSummary(
                 session_id="s1",
+                runtime_mode="deterministic_demo",
                 current_state="In Progress",
                 current_stage="QA",
                 prd_status="completed",
@@ -49,6 +50,7 @@ class ReviewTests(unittest.TestCase):
         )
 
         self.assertIn("## Workflow Status", review)
+        self.assertIn("runtime_mode: deterministic_demo", review)
         self.assertIn("current_state: In Progress", review)
         self.assertIn("current_stage: QA", review)
         self.assertIn("prd_status: completed", review)

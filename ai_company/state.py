@@ -24,7 +24,13 @@ class StateStore:
         ):
             directory.mkdir(parents=True, exist_ok=True)
 
-    def create_session(self, request: str, raw_message: str | None = None) -> SessionRecord:
+    def create_session(
+        self,
+        request: str,
+        raw_message: str | None = None,
+        *,
+        runtime_mode: str = "session_bootstrap",
+    ) -> SessionRecord:
         self.ensure_layout()
         session_id = self._next_session_id(request)
         artifact_dir = self.root / "artifacts" / session_id
@@ -58,6 +64,7 @@ class StateStore:
             session,
             WorkflowSummary(
                 session_id=session.session_id,
+                runtime_mode=runtime_mode,
                 current_state="Intake",
                 current_stage="Intake",
                 artifact_paths={

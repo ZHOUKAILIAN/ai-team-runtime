@@ -7,6 +7,7 @@ class WorkflowSummaryTests(unittest.TestCase):
 
         summary = WorkflowSummary(
             session_id="session-123",
+            runtime_mode="session_bootstrap",
             current_state="Intake",
             current_stage="Product",
             prd_status="completed",
@@ -20,12 +21,14 @@ class WorkflowSummaryTests(unittest.TestCase):
         rendered = render_workflow_summary(summary)
 
         self.assertIn("- session_id: session-123", rendered)
+        self.assertIn("- runtime_mode: session_bootstrap", rendered)
         self.assertIn("- current_state: Intake", rendered)
         self.assertIn("- prd_status: completed", rendered)
         self.assertIn("## Artifact Paths", rendered)
         self.assertIn("- request: /tmp/request.md", rendered)
         self.assertIn("- workflow_summary: /tmp/workflow_summary.md", rendered)
         self.assertLess(rendered.index("- session_id: session-123"), rendered.index("- current_state: Intake"))
+        self.assertLess(rendered.index("- runtime_mode: session_bootstrap"), rendered.index("- current_state: Intake"))
         self.assertLess(rendered.index("- current_state: Intake"), rendered.index("- prd_status: completed"))
 
 

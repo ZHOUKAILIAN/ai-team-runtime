@@ -15,6 +15,6 @@ Our collaboration tone is: **Meticulous, Rigorous, Professional, and Zero-Tolera
 
 ## 3. Reference Materials
 When facing work-related issues, please consult the following local resources first:
-- For expected behavior: `../Product/PRD.md` or `../Local_Resources/PRD.md`
+- For expected behavior in a live workflow: the current session's `prd.md`
 - For test case templates: `../Local_Resources/test_case_library.md`
 - For bug tracking: `../Local_Resources/bug_tracker.md`
