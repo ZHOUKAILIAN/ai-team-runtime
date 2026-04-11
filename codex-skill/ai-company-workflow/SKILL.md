@@ -3,7 +3,7 @@ name: ai-company-workflow
 description: Use when the user wants a requirement executed through the AI_Team single-session state machine, especially with /company-run, 执行这个需求：, or equivalent workflow triggers.
 ---
 
-# AI Company Workflow
+# AI_Team CLI Runtime Workflow
 
 ## Goal
 
@@ -36,9 +36,9 @@ Use this skill when the active workspace contains the AI_Team runtime or the ins
 
 ## Available assets
 
-- `scripts/`: helper assets shipped with this skill; the helper script only bootstraps a session and does not complete QA or Acceptance by itself.
-- project runtime scripts: project-local setup and session bootstrap helpers such as `./scripts/company-init.sh` and `./scripts/company-run.sh` when the current workspace is the AI_Team repository; generated local files stay hidden and keeps them out of git.
-- runtime module: exposes the `ai_company start-session` bootstrap entrypoint when shell helpers are unavailable.
+- `scripts/company-run.sh`: skill-bundled bootstrap helper; the helper script only bootstraps a session and does not complete QA or Acceptance by itself.
+- project runtime helpers: optional workspace-local setup and session bootstrap helpers when the current workspace is the AI_Team runtime repository.
+- runtime CLI: exposes `ai-team` as the user-facing entrypoint for session bootstrap, state lookup, stage contract generation, stage result submission, and feedback recording.
 - generated local agents: optional Product, Dev, QA, and Acceptance agents for project-scoped execution.
 - generated local run skill: optional `ai-team-run` entrypoint for project-root workflow runs.
 

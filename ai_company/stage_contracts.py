@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 from .models import StageContract
@@ -28,6 +29,20 @@ EVIDENCE_REQUIREMENTS = {
 }
 
 
+def _compose_role_context(role) -> str:
+    if role is None:
+        return ""
+
+    sections: list[str] = []
+    if role.effective_context_text.strip():
+        sections.append("# Role Context\n\n" + role.effective_context_text.strip())
+    if role.effective_memory_text.strip():
+        sections.append("# Role Memory\n\n" + role.effective_memory_text.strip())
+    if role.effective_skill_text.strip():
+        sections.append("# Role Skill\n\n" + role.effective_skill_text.strip())
+    return "\n\n".join(sections)
+
+
 def build_stage_contract(
     *,
     repo_root: Path,
@@ -42,14 +57,49 @@ def build_stage_contract(
 
     input_artifacts = dict(summary.artifact_paths)
     input_artifacts["session"] = str(session.session_dir / "session.json")
+    contract_id = _build_contract_id(
+        session_id=session_id,
+        stage=stage,
+        summary=summary,
+        required_outputs=[artifact_name_for_stage(stage)],
+        evidence_requirements=list(EVIDENCE_REQUIREMENTS.get(stage, [])),
+    )
 
     return StageContract(
         session_id=session_id,
         stage=stage,
+        contract_id=contract_id,
         goal=STAGE_GOALS.get(stage, f"Execute the {stage} stage contract."),
         input_artifacts=input_artifacts,
         required_outputs=[artifact_name_for_stage(stage)],
         forbidden_actions=list(COMMON_FORBIDDEN_ACTIONS),
         evidence_requirements=list(EVIDENCE_REQUIREMENTS.get(stage, [])),
-        role_context=role.effective_skill_text if role else "",
+        role_context=_compose_role_context(role),
     )
+
+
+def _build_contract_id(
+    *,
+    session_id: str,
+    stage: str,
+    summary,
+    required_outputs: list[str],
+    evidence_requirements: list[str],
+) -> str:
+    payload = "|".join(
+        [
+            session_id,
+            stage,
+            summary.current_state,
+            summary.current_stage,
+            summary.prd_status,
+            summary.dev_status,
+            summary.qa_status,
+            summary.acceptance_status,
+            summary.human_decision,
+            str(summary.qa_round),
+            ",".join(required_outputs),
+            ",".join(evidence_requirements),
+        ]
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]

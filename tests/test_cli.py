@@ -264,6 +264,203 @@ class CliTests(unittest.TestCase):
             self.assertEqual(payload["stage"], "Product")
             self.assertIn("prd.md", payload["required_outputs"])
             self.assertIn("must_not_change_stage_order", payload["forbidden_actions"])
+            self.assertIn("contract_id", payload)
+
+    def test_submit_stage_result_rejects_bundle_for_unexpected_stage(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+
+        with TemporaryDirectory(dir=local_temp_dir()) as temp_dir:
+            bootstrap = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "ai_company",
+                    "--repo-root",
+                    str(repo_root),
+                    "--state-root",
+                    temp_dir,
+                    "start-session",
+                    "--message",
+                    "执行这个需求：做一个带阶段门禁的流程",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(bootstrap.returncode, 0)
+            session_id = dict(
+                line.split(": ", 1) for line in bootstrap.stdout.splitlines() if ":" in line
+            )["session_id"]
+
+            wrong_bundle = Path(temp_dir) / "wrong_dev_bundle.json"
+            wrong_bundle.write_text(
+                json.dumps(
+                    {
+                        "session_id": session_id,
+                        "stage": "Dev",
+                        "status": "completed",
+                        "artifact_name": "implementation.md",
+                        "artifact_content": "# Implementation\n",
+                        "journal": "# Dev Journal\n",
+                        "findings": [],
+                        "evidence": ["self_verification"],
+                        "summary": "Dev attempted to skip Product",
+                    }
+                )
+            )
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "ai_company",
+                    "--repo-root",
+                    str(repo_root),
+                    "--state-root",
+                    temp_dir,
+                    "submit-stage-result",
+                    "--session-id",
+                    session_id,
+                    "--bundle",
+                    str(wrong_bundle),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Expected stage Product", result.stderr + result.stdout)
+
+    def test_submit_stage_result_requires_matching_contract_id(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+
+        with TemporaryDirectory(dir=local_temp_dir()) as temp_dir:
+            bootstrap = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "ai_company",
+                    "--repo-root",
+                    str(repo_root),
+                    "--state-root",
+                    temp_dir,
+                    "start-session",
+                    "--message",
+                    "执行这个需求：做一个带 contract guard 的流程",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(bootstrap.returncode, 0)
+            session_id = dict(
+                line.split(": ", 1) for line in bootstrap.stdout.splitlines() if ":" in line
+            )["session_id"]
+
+            contract_result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "ai_company",
+                    "--repo-root",
+                    str(repo_root),
+                    "--state-root",
+                    temp_dir,
+                    "build-stage-contract",
+                    "--session-id",
+                    session_id,
+                    "--stage",
+                    "Product",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(contract_result.returncode, 0)
+            contract_payload = json.loads(contract_result.stdout)
+
+            wrong_contract_bundle = Path(temp_dir) / "product_bundle_wrong_contract.json"
+            wrong_contract_bundle.write_text(
+                json.dumps(
+                    {
+                        "session_id": session_id,
+                        "contract_id": "contract-wrong",
+                        "stage": "Product",
+                        "status": "completed",
+                        "artifact_name": "prd.md",
+                        "artifact_content": "# Product PRD\n\n## Acceptance Criteria\n- Verify gate.\n",
+                        "journal": "# Product Journal\n",
+                        "findings": [],
+                        "evidence": ["explicit_acceptance_criteria"],
+                        "summary": "Drafted PRD",
+                    }
+                )
+            )
+
+            wrong_result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "ai_company",
+                    "--repo-root",
+                    str(repo_root),
+                    "--state-root",
+                    temp_dir,
+                    "submit-stage-result",
+                    "--session-id",
+                    session_id,
+                    "--bundle",
+                    str(wrong_contract_bundle),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertNotEqual(wrong_result.returncode, 0)
+            self.assertIn("contract_id", wrong_result.stderr + wrong_result.stdout)
+
+            correct_bundle = Path(temp_dir) / "product_bundle_correct_contract.json"
+            correct_bundle.write_text(
+                json.dumps(
+                    {
+                        "session_id": session_id,
+                        "contract_id": contract_payload["contract_id"],
+                        "stage": "Product",
+                        "status": "completed",
+                        "artifact_name": "prd.md",
+                        "artifact_content": "# Product PRD\n\n## Acceptance Criteria\n- Verify gate.\n",
+                        "journal": "# Product Journal\n",
+                        "findings": [],
+                        "evidence": ["explicit_acceptance_criteria"],
+                        "summary": "Drafted PRD",
+                    }
+                )
+            )
+
+            correct_result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "ai_company",
+                    "--repo-root",
+                    str(repo_root),
+                    "--state-root",
+                    temp_dir,
+                    "submit-stage-result",
+                    "--session-id",
+                    session_id,
+                    "--bundle",
+                    str(correct_bundle),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(correct_result.returncode, 0)
+            self.assertIn("current_state: WaitForCEOApproval", correct_result.stdout)
 
     def test_record_human_decision_routes_wait_state_to_dev(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
@@ -290,11 +487,34 @@ class CliTests(unittest.TestCase):
             output_lines = [line for line in start_result.stdout.splitlines() if ":" in line]
             session_id = dict(line.split(": ", 1) for line in output_lines)["session_id"]
 
+            contract_result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "ai_company",
+                    "--repo-root",
+                    str(repo_root),
+                    "--state-root",
+                    temp_dir,
+                    "build-stage-contract",
+                    "--session-id",
+                    session_id,
+                    "--stage",
+                    "Product",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(contract_result.returncode, 0)
+            contract_payload = json.loads(contract_result.stdout)
+
             product_bundle = Path(temp_dir) / "product_bundle.json"
             product_bundle.write_text(
                 json.dumps(
                     {
                         "session_id": session_id,
+                        "contract_id": contract_payload["contract_id"],
                         "stage": "Product",
                         "status": "completed",
                         "artifact_name": "prd.md",

@@ -30,6 +30,11 @@ class SkillPackageTests(unittest.TestCase):
         testcase.assertIn("must not change the AI_Team stage order", content)
         testcase.assertNotIn("1% rule", content)
         testcase.assertNotIn("Skill Dispatch Protocol", content)
+        testcase.assertNotIn("python3 -m ai_company start-session", content)
+        testcase.assertIn("Goal", content)
+        testcase.assertIn("When To Use", content)
+        testcase.assertIn("Available assets", content)
+        testcase.assertIn("Completion Signals", content)
 
     def test_root_skill_describes_single_session_state_machine(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
@@ -68,7 +73,7 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("explicit user approval", content)
         self.assertIn("Available assets", content)
         self.assertIn("scripts/", content)
-        self.assertIn("ai_company start-session", content)
+        self.assertIn("ai-team", content)
         self.assertIn(
             "deterministic runtime output is workflow metadata only, not real QA/Acceptance evidence",
             content,
@@ -86,9 +91,7 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("name: ai-company-workflow", content)
         self.assertIn("/company-run", content)
         self.assertIn("company-run.sh", content)
-        self.assertIn("./scripts/company-init.sh", content)
-        self.assertIn("./scripts/company-run.sh", content)
-        self.assertIn("keeps them out of git", content)
+        self.assertIn("scripts/", content)
         self.assertIn("Intake", content)
         self.assertIn("ProductDraft", content)
         self.assertIn("WaitForCEOApproval", content)
@@ -116,7 +119,7 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("explicit user approval", content)
         self.assertIn("Available assets", content)
         self.assertIn("scripts/", content)
-        self.assertIn("ai_company start-session", content)
+        self.assertIn("ai-team", content)
         self.assertIn(
             "deterministic runtime output is workflow metadata only, not real QA/Acceptance evidence",
             content,
@@ -125,6 +128,21 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("continue the state machine in the current Codex session", content)
         self.assertIn("does not complete QA or Acceptance by itself", content)
         self._assert_common_follow_through_contract(self, content)
+
+    def test_skills_stay_close_to_skill_standard(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+
+        for path in (
+            repo_root / "SKILL.md",
+            repo_root / "codex-skill" / "ai-company-workflow" / "SKILL.md",
+        ):
+            content = path.read_text()
+            self.assertIn("Goal", content)
+            self.assertIn("When To Use", content)
+            self.assertIn("Available assets", content)
+            self.assertIn("Completion Signals", content)
+            self.assertNotIn("file://", content)
+            self.assertNotIn("/Users/", content)
 
     def test_root_and_packaged_skills_keep_follow_through_parity(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
