@@ -35,11 +35,29 @@ class DocsTests(unittest.TestCase):
         self.assertIn("qa_report.md", readme_en)
         self.assertIn("acceptance_report.md", readme_en)
         self.assertIn("workflow_summary.md", readme_en)
+        self.assertIn("acceptance_contract.json", readme_en)
+        self.assertIn("review_completion.json", readme_en)
+        self.assertIn("record-feedback", readme_en)
+        self.assertIn("completion signals", readme_en)
+        self.assertIn("runtime_screenshot", readme_en)
+        self.assertIn("overlay_diff", readme_en)
+        self.assertIn("page_root_recursive_audit", readme_en)
+        self.assertIn("wechat_native_capsule", readme_en)
+        self.assertIn("explicit user approval", readme_en)
         self.assertIn("prd.md", readme_zh)
         self.assertIn("implementation.md", readme_zh)
         self.assertIn("qa_report.md", readme_zh)
         self.assertIn("acceptance_report.md", readme_zh)
         self.assertIn("workflow_summary.md", readme_zh)
+        self.assertIn("acceptance_contract.json", readme_zh)
+        self.assertIn("review_completion.json", readme_zh)
+        self.assertIn("record-feedback", readme_zh)
+        self.assertIn("completion signal", readme_zh)
+        self.assertIn("runtime_screenshot", readme_zh)
+        self.assertIn("overlay_diff", readme_zh)
+        self.assertIn("page_root_recursive_audit", readme_zh)
+        self.assertIn("wechat_native_capsule", readme_zh)
+        self.assertIn("显式批准", readme_zh)
 
     def test_readmes_document_project_scoped_codex_setup(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
@@ -92,12 +110,18 @@ class DocsTests(unittest.TestCase):
 
         self.assertIn("start-session", root_skill)
         self.assertIn("Continue after session bootstrap", root_skill)
+        self.assertIn("Workflow Isolation Contract", root_skill)
+        self.assertIn("Generic methodology skills may assist inside a stage", root_skill)
+        self.assertIn("must not change the AI_Team stage order", root_skill)
         self.assertIn("workflow_summary.md", root_skill)
         self.assertIn("implementation.md", root_skill)
         self.assertIn("WaitForCEOApproval", root_skill)
         self.assertIn("WaitForHumanDecision", root_skill)
         self.assertIn("missing evidence forces blocked", root_skill)
         self.assertIn("QA must independently rerun verification", root_skill)
+        self.assertIn("acceptance_contract.json", root_skill)
+        self.assertIn("review_completion.json", root_skill)
+        self.assertIn("explicit user approval", root_skill)
         self.assertIn(".codex/agents/*.toml", root_skill)
         self.assertIn(".agents/skills/ai-team-run/SKILL.md", root_skill)
         self.assertIn("./scripts/company-run.sh", root_skill)
@@ -112,14 +136,55 @@ class DocsTests(unittest.TestCase):
         self.assertIn("implementation.md", qa_skill)
         self.assertIn("miniprogram", qa_skill)
         self.assertIn("browser-use", qa_skill)
+        self.assertIn("structured finding", qa_skill)
+        self.assertIn("completion signal", qa_skill)
         self.assertIn("already specified the verification platform", acceptance_skill)
         self.assertIn("recommended_go", acceptance_skill)
         self.assertIn("recommended_no_go", acceptance_skill)
         self.assertIn("miniprogram", acceptance_skill)
         self.assertIn("browser-use", acceptance_skill)
-        self.assertIn("./scripts/company-init.sh", packaged_skill)
-        self.assertIn("~/.codex/vendor/ai-team", packaged_skill)
-        self.assertIn("keeps them out of git", packaged_skill)
+        self.assertIn("structured findings", acceptance_skill)
+        self.assertIn("completion-signal", acceptance_skill)
+        self.assertIn("review_completion.json", acceptance_skill)
+        self.assertIn("explicit user approval", acceptance_skill)
+        self.assertIn("Acceptance or human-feedback rework round", dev_skill)
+        self.assertIn("Available assets", packaged_skill)
+        self.assertIn("scripts/", packaged_skill)
+        self.assertIn("ai_company start-session", packaged_skill)
+        self.assertIn("record-feedback", root_skill)
+        self.assertIn("completion signals", packaged_skill)
+        self.assertIn("acceptance_contract.json", packaged_skill)
+        self.assertIn("review_completion.json", packaged_skill)
+        self.assertIn("explicit user approval", packaged_skill)
+        self.assertIn("runtime_screenshot", root_skill)
+        self.assertIn("overlay_diff", root_skill)
+        self.assertIn("page_root_recursive_audit", root_skill)
+        self.assertIn("wechat_native_capsule", acceptance_skill)
+        self.assertIn("native-node policy", acceptance_skill)
+
+    def test_skills_follow_skill_standard_shape(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        skill_paths = [
+            repo_root / "SKILL.md",
+            repo_root / "Product" / "SKILL.md",
+            repo_root / "Dev" / "SKILL.md",
+            repo_root / "QA" / "SKILL.md",
+            repo_root / "Acceptance" / "SKILL.md",
+            repo_root / "Ops" / "SKILL.md",
+            repo_root / "codex-skill" / "ai-company-workflow" / "SKILL.md",
+        ]
+
+        for path in skill_paths:
+            content = path.read_text()
+            with self.subTest(path=path):
+                self.assertIn("description: Use when", content)
+                self.assertNotIn("## Procedure", content)
+                self.assertNotIn("1% rule", content)
+                self.assertNotIn("Skill Dispatch Protocol", content)
+
+        dev_skill = (repo_root / "Dev" / "SKILL.md").read_text()
+        self.assertIn("Generic methodology skills are allowed inside Dev", dev_skill)
+        self.assertIn("must not replace QA", dev_skill)
 
 
 if __name__ == "__main__":
