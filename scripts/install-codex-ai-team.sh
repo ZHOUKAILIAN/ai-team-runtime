@@ -12,7 +12,7 @@ CODEX_HOME_DIR="${CODEX_HOME:-${HOME}/.codex}"
 VENDOR_ROOT="${CODEX_HOME_DIR}/vendor"
 VENDOR_DIR="${AI_TEAM_VENDOR_DIR:-${VENDOR_ROOT}/ai-team}"
 REPO_SOURCE="${AI_TEAM_REPO_SOURCE:-}"
-REPO_URL="${AI_TEAM_REPO_URL:-https://github.com/ZHOUKAILIAN/AI_Team.git}"
+REPO_URL="${AI_TEAM_REPO_URL:-https://github.com/ZHOUKAILIAN/ai-team-runtime.git}"
 
 mkdir -p "${VENDOR_ROOT}"
 
