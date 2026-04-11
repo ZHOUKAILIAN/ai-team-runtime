@@ -205,6 +205,7 @@ class StageContract:
     session_id: str
     stage: str
     goal: str
+    contract_id: str = ""
     input_artifacts: dict[str, str] = field(default_factory=dict)
     required_outputs: list[str] = field(default_factory=list)
     forbidden_actions: list[str] = field(default_factory=list)
@@ -215,6 +216,7 @@ class StageContract:
         return {
             "session_id": self.session_id,
             "stage": self.stage,
+            "contract_id": self.contract_id,
             "goal": self.goal,
             "input_artifacts": dict(self.input_artifacts),
             "required_outputs": list(self.required_outputs),
@@ -231,6 +233,7 @@ class StageResultEnvelope:
     status: str
     artifact_name: str
     artifact_content: str
+    contract_id: str = ""
     journal: str = ""
     findings: list[Finding] = field(default_factory=list)
     evidence: list[str] = field(default_factory=list)
@@ -248,6 +251,7 @@ class StageResultEnvelope:
             status=payload.get("status", ""),
             artifact_name=payload.get("artifact_name", ""),
             artifact_content=payload.get("artifact_content", ""),
+            contract_id=payload.get("contract_id", ""),
             journal=payload.get("journal", ""),
             findings=[Finding.from_dict(item) for item in payload.get("findings", [])],
             evidence=list(payload.get("evidence", [])),
@@ -265,6 +269,7 @@ class StageResultEnvelope:
             "status": self.status,
             "artifact_name": self.artifact_name,
             "artifact_content": self.artifact_content,
+            "contract_id": self.contract_id,
             "journal": self.journal,
             "findings": [finding.to_dict() for finding in self.findings],
             "evidence": list(self.evidence),

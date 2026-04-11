@@ -29,7 +29,7 @@ def main(argv: list[str] | None = None) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="ai_company",
+        prog="ai-team",
         description=(
             "AI_Team single-session workflow CLI. Prefer start-session for the real skill-driven workflow; "
             "run/agent-run are deterministic demo commands."
@@ -276,9 +276,26 @@ def _handle_submit_stage_result(args: argparse.Namespace) -> int:
         raise SystemExit("Bundle session_id does not match --session-id.")
 
     store = StateStore(args.state_root)
+    summary = store.load_workflow_summary(args.session_id)
+    expected_stage = _expected_submission_stage(summary)
+    if expected_stage is None:
+        raise SystemExit(f"Cannot submit a stage result while workflow is waiting in {summary.current_state}.")
+    if result.stage != expected_stage:
+        raise SystemExit(f"Expected stage {expected_stage}, but bundle declared {result.stage}.")
+
+    expected_contract = build_stage_contract(
+        repo_root=args.repo_root,
+        state_store=store,
+        session_id=args.session_id,
+        stage=expected_stage,
+    )
+    if not result.contract_id:
+        raise SystemExit("Bundle is missing contract_id.")
+    if result.contract_id != expected_contract.contract_id:
+        raise SystemExit("Bundle contract_id does not match the current stage contract.")
+
     stage_record = store.record_stage_result(args.session_id, result)
     session = store.load_session(args.session_id)
-    summary = store.load_workflow_summary(args.session_id)
     updated_summary = StageMachine().advance(summary=summary, stage_result=result)
     updated_summary.artifact_paths[result.stage.lower()] = str(stage_record.artifact_path)
     updated_summary.artifact_paths.update(stage_record.supplemental_artifact_paths)
@@ -363,3 +380,15 @@ def _print_summary(summary: WorkflowSummary) -> None:
     print(f"current_stage: {summary.current_stage}")
     print(f"acceptance_status: {summary.acceptance_status}")
     print(f"human_decision: {summary.human_decision}")
+
+
+def _expected_submission_stage(summary: WorkflowSummary) -> str | None:
+    if summary.current_state in {"Intake", "ProductDraft"}:
+        return "Product"
+    if summary.current_state == "Dev":
+        return "Dev"
+    if summary.current_state == "QA":
+        return "QA"
+    if summary.current_state == "Acceptance":
+        return "Acceptance"
+    return None

@@ -41,9 +41,10 @@ Use this skill only for AI_Team workflow execution. Do not use it for one-off co
 - `./scripts/company-run.sh`: session bootstrap helper for this repository.
 - `.codex/agents/*.toml`: generated local agents for Product, Dev, QA, and Acceptance.
 - `.agents/skills/ai-team-run/SKILL.md`: generated local run skill for project-root execution.
-- `ai_company/cli.py`: runtime module that exposes the `ai_company start-session` bootstrap entrypoint.
+- `ai-team`: user-facing CLI entrypoint backed by `ai_company/cli.py`; the CLI owns session bootstrap, state lookup, stage contract generation, stage result submission, and feedback recording.
 - `.ai_company_state/artifacts/<session_id>/`: session-scoped handoff artifacts.
 - `.ai_company_state/sessions/<session_id>/`: journals, findings, stage metadata, and `review.md`.
+- `docs/workflow-specs/2026-04-11-ai-team-codex-cli-help.md`: Codex-oriented runtime operation help for the CLI harness loop.
 
 The helper scripts bootstrap metadata only. deterministic runtime output is workflow metadata only, not real QA/Acceptance evidence.
 

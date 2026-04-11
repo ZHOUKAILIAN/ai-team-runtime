@@ -76,6 +76,7 @@ class StageMachine:
                 current_state="WaitForHumanDecision",
                 current_stage="Acceptance",
                 acceptance_status=acceptance_status,
+                human_decision="pending",
             )
 
         raise StageTransitionError(f"Unsupported stage result: {stage_result.stage}")

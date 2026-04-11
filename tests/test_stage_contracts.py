@@ -56,6 +56,40 @@ class StageContractTests(unittest.TestCase):
         self.assertIn("qa_report.md", contract.required_outputs)
         self.assertIn("independent_verification", contract.evidence_requirements)
 
+    def test_contract_role_context_includes_learned_context_memory_and_skill(self) -> None:
+        from ai_company.models import Finding
+        from ai_company.stage_contracts import build_stage_contract
+        from ai_company.state import StateStore
+
+        repo_root = Path(__file__).resolve().parents[1]
+        with TemporaryDirectory(dir=local_temp_dir()) as temp_dir:
+            store = StateStore(Path(temp_dir))
+            session = store.create_session(
+                "Build a harness-first workflow",
+                runtime_mode="harness",
+            )
+            store.apply_learning(
+                Finding(
+                    source_stage="Acceptance",
+                    target_stage="Dev",
+                    issue="Missing empty-state evidence.",
+                    lesson="Preserve empty-state validation in follow-up rounds.",
+                    proposed_context_update="Review empty-state behavior before handoff.",
+                    proposed_skill_update="Require visible empty-state evidence before reporting success.",
+                )
+            )
+
+            contract = build_stage_contract(
+                repo_root=repo_root,
+                state_store=store,
+                session_id=session.session_id,
+                stage="Dev",
+            )
+
+        self.assertIn("Review empty-state behavior before handoff.", contract.role_context)
+        self.assertIn("Preserve empty-state validation in follow-up rounds.", contract.role_context)
+        self.assertIn("Require visible empty-state evidence before reporting success.", contract.role_context)
+
 
 if __name__ == "__main__":
     unittest.main()

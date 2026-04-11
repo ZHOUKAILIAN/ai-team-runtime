@@ -158,7 +158,7 @@ Best practice: invoke this skill only when Codex is opened at the target project
 - `scripts/company-run.sh`: local session bootstrap helper that prints `session_id`, `artifact_dir`, and `summary_path`.
 - `.codex/agents/`: local Product, Dev, QA, and Acceptance agents for this repository.
 - `.ai_company_state/artifacts/<session_id>/`: session-scoped artifacts and handoff files.
-- `ai_company/cli.py`: runtime module exposing the `ai_company start-session` bootstrap entrypoint.
+- `ai-team`: runtime CLI backed by `ai_company/cli.py`, exposing the `ai-team start-session` bootstrap entrypoint.
 
 Read the available helper assets before choosing the bootstrap path.
 

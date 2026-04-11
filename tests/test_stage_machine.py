@@ -86,6 +86,38 @@ class StageMachineTests(unittest.TestCase):
         self.assertEqual(updated.current_stage, "Dev")
         self.assertEqual(updated.human_decision, "rework")
 
+    def test_acceptance_result_resets_human_decision_for_final_go_no_go(self) -> None:
+        from ai_company.models import StageResultEnvelope, WorkflowSummary
+        from ai_company.stage_machine import StageMachine
+
+        summary = WorkflowSummary(
+            session_id="session-1",
+            runtime_mode="harness",
+            current_state="Acceptance",
+            current_stage="Acceptance",
+            prd_status="drafted",
+            dev_status="completed",
+            qa_status="passed",
+            acceptance_status="pending",
+            human_decision="go",
+            qa_round=1,
+        )
+        result = StageResultEnvelope(
+            session_id="session-1",
+            stage="Acceptance",
+            status="completed",
+            artifact_name="acceptance_report.md",
+            artifact_content="# Acceptance Report\n\nRecommend go.\n",
+            acceptance_status="recommended_go",
+        )
+
+        updated = StageMachine().advance(summary=summary, stage_result=result)
+
+        self.assertEqual(updated.current_state, "WaitForHumanDecision")
+        self.assertEqual(updated.current_stage, "Acceptance")
+        self.assertEqual(updated.acceptance_status, "recommended_go")
+        self.assertEqual(updated.human_decision, "pending")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -20,4 +20,8 @@ else
 fi
 
 cd "${RUNTIME_DIR}"
-python3 -m ai_company start-session --message "${RAW_MESSAGE}"
+if command -v ai-team >/dev/null 2>&1; then
+  ai-team start-session --message "${RAW_MESSAGE}"
+else
+  python3 -m ai_company start-session --message "${RAW_MESSAGE}"
+fi
