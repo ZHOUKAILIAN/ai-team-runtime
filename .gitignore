@@ -2,6 +2,8 @@
 .worktrees/
 __pycache__/
 *.pyc
+ai_company.egg-info/
+dist/
 .codex/
 .agents/
 

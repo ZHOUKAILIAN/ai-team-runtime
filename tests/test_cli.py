@@ -14,6 +14,18 @@ def local_temp_dir() -> Path:
 
 
 class CliTests(unittest.TestCase):
+    def test_cli_without_command_exits_with_argparse_error_instead_of_traceback(self) -> None:
+        result = subprocess.run(
+            [sys.executable, "-m", "ai_company"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("the following arguments are required: command", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
     def test_cli_help_exits_successfully(self) -> None:
         result = subprocess.run(
             [sys.executable, "-m", "ai_company", "--help"],
