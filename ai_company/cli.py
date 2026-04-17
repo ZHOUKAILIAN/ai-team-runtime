@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .backend import DeterministicBackend
 from .board import build_board_snapshot
+from .board_server import create_board_server
 from .gatekeeper import evaluate_candidate
 from .harness_paths import default_state_root
 from .intake import parse_intake_message
@@ -210,6 +211,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Aggregate every workspace under CODEX_HOME.",
     )
     board_snapshot_parser.set_defaults(handler=_handle_board_snapshot)
+
+    serve_board_parser = subparsers.add_parser(
+        "serve-board",
+        help="Serve the local read-only board.",
+    )
+    serve_board_parser.add_argument("--all-workspaces", action="store_true")
+    serve_board_parser.add_argument("--host", default="127.0.0.1")
+    serve_board_parser.add_argument("--port", type=int, default=8765)
+    serve_board_parser.add_argument("--poll-interval", type=int, default=5)
+    serve_board_parser.set_defaults(handler=_handle_serve_board)
 
     review_parser = subparsers.add_parser("review", help="Print the latest or a selected review.")
     review_parser.add_argument("--session-id", help="Specific session ID to inspect.")
@@ -545,6 +556,21 @@ def _handle_board_snapshot(args: argparse.Namespace) -> int:
     if not args.all_workspaces:
         raise SystemExit("board-snapshot currently requires --all-workspaces.")
     print(json.dumps(build_board_snapshot(), indent=2))
+    return 0
+
+
+def _handle_serve_board(args: argparse.Namespace) -> int:
+    if not args.all_workspaces:
+        raise SystemExit("serve-board currently requires --all-workspaces.")
+    server = create_board_server(host=args.host, port=args.port)
+    print(f"board_url: http://{args.host}:{server.server_address[1]}")
+    print(f"poll_interval_seconds: {args.poll_interval}")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        return 0
+    finally:
+        server.server_close()
     return 0
 
 

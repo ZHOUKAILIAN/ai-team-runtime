@@ -1,0 +1,254 @@
+BOARD_HTML = """<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI_Team Read-Only Board</title>
+  <style>
+    :root {
+      --ink: #14202b;
+      --muted: #667788;
+      --paper: #f7f1e6;
+      --panel: #ffffff;
+      --line: #ded5c4;
+      --blue: #2f6f9f;
+      --green: #3f8f5f;
+      --yellow: #d8a026;
+      --orange: #c56d2d;
+      --red: #b74436;
+      --deep-red: #7f1d1d;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 10% 0%, rgba(216,160,38,.18), transparent 32rem),
+        linear-gradient(135deg, var(--paper), #e9eef2);
+    }
+    header {
+      padding: 22px 28px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(255,255,255,.72);
+      backdrop-filter: blur(10px);
+    }
+    h1 { margin: 0; font-size: 28px; }
+    h2, h3 { margin-top: 0; }
+    .subtitle { color: var(--muted); margin-top: 4px; }
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 10px;
+      padding: 16px 28px;
+    }
+    .stat {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 12px;
+    }
+    .stat b { display: block; font-size: 24px; }
+    main {
+      display: grid;
+      grid-template-columns: 380px 1fr;
+      gap: 18px;
+      padding: 0 28px 28px;
+    }
+    aside, section {
+      background: rgba(255,255,255,.82);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      min-height: 560px;
+      overflow: hidden;
+    }
+    .tree, .detail { padding: 18px; }
+    .project, .worktree, .session {
+      border-radius: 12px;
+      padding: 10px;
+      margin-bottom: 8px;
+      word-break: break-word;
+    }
+    .project { background: var(--ink); color: var(--paper); }
+    .worktree { margin-left: 14px; background: #eef3f6; }
+    .session { margin-left: 28px; background: #fff; border: 1px solid var(--line); cursor: pointer; }
+    .session.active { border-color: var(--blue); box-shadow: 0 0 0 2px rgba(47,111,159,.16); }
+    .timeline {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(0, 1fr));
+      gap: 8px;
+      margin: 16px 0;
+    }
+    .stage {
+      padding: 10px;
+      border-radius: 12px;
+      text-align: center;
+      background: #ece7dc;
+      font-size: 12px;
+    }
+    .stage.current { background: #dbeafe; border: 1px solid var(--blue); }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 14px;
+      margin-bottom: 12px;
+    }
+    .pill { display: inline-block; padding: 4px 8px; border-radius: 999px; color: white; font-size: 12px; }
+    .RUNNING, .SUBMITTED { background: var(--blue); }
+    .VERIFYING { background: var(--orange); }
+    .PASSED, .Done { background: var(--green); }
+    .FAILED { background: var(--red); }
+    .BLOCKED, .Blocked { background: var(--deep-red); }
+    .WaitForCEOApproval, .WaitForHumanDecision { background: var(--yellow); color: #1b1308; }
+    pre {
+      white-space: pre-wrap;
+      max-height: 300px;
+      overflow: auto;
+      background: #111827;
+      color: #e5e7eb;
+      padding: 12px;
+      border-radius: 12px;
+    }
+    button.link {
+      border: 0;
+      background: transparent;
+      color: var(--blue);
+      cursor: pointer;
+      padding: 0;
+      font: inherit;
+      text-decoration: underline;
+    }
+    @media (max-width: 860px) {
+      .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      main { grid-template-columns: 1fr; }
+      .timeline { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>AI_Team Read-Only Board</h1>
+    <div class="subtitle">Project -> Worktree -> Session. Read-only. Polling every 5 seconds.</div>
+  </header>
+  <div id="stats" class="stats"></div>
+  <main>
+    <aside><div id="tree" class="tree"></div></aside>
+    <section><div id="detail" class="detail"></div></section>
+  </main>
+  <script>
+    let board = null;
+    let selectedSessionId = null;
+    const stages = ['Product', 'WaitForCEOApproval', 'Dev', 'QA', 'Acceptance', 'WaitForHumanDecision', 'Done'];
+
+    async function loadBoard() {
+      const response = await fetch('/api/board');
+      board = await response.json();
+      render();
+    }
+
+    function allSessions() {
+      const sessions = [];
+      for (const project of board?.projects || []) {
+        for (const worktree of project.worktrees || []) {
+          for (const session of worktree.sessions || []) {
+            sessions.push({ project, worktree, session });
+          }
+        }
+      }
+      return sessions;
+    }
+
+    function render() {
+      renderStats();
+      renderTree();
+      renderDetail();
+    }
+
+    function renderStats() {
+      const stats = board?.stats || {};
+      const keys = ['projects', 'worktrees', 'sessions', 'blocked', 'waiting_human', 'submitted_runs'];
+      document.getElementById('stats').innerHTML = keys
+        .map(key => `<div class="stat"><b>${stats[key] || 0}</b><span>${key}</span></div>`).join('');
+    }
+
+    function renderTree() {
+      const sessions = allSessions();
+      if (!selectedSessionId && sessions.length) selectedSessionId = sessions[0].session.session_id;
+      document.getElementById('tree').innerHTML = (board?.projects || []).map(project => `
+        <div class="project"><b>${escapeHtml(project.project_name)}</b><br><small>${escapeHtml(project.project_root || 'legacy workspace')}</small></div>
+        ${(project.worktrees || []).map(worktree => `
+          <div class="worktree"><b>${escapeHtml(worktree.branch || 'unknown branch')}</b><br><small>${escapeHtml(worktree.worktree_path || worktree.state_root)}</small></div>
+          ${(worktree.sessions || []).map(session => `
+            <div class="session ${session.session_id === selectedSessionId ? 'active' : ''}" onclick="selectSession('${session.session_id}')">
+              <b>${escapeHtml(shortText(session.request))}</b><br>
+              <small>${escapeHtml(session.current_state)} / ${escapeHtml(session.active_run?.state || 'no run')}</small>
+            </div>
+          `).join('')}
+        `).join('')}
+      `).join('');
+    }
+
+    function renderDetail() {
+      const match = allSessions().find(item => item.session.session_id === selectedSessionId) || allSessions()[0];
+      if (!match) {
+        document.getElementById('detail').innerHTML = '<div class="card">No sessions found.</div>';
+        return;
+      }
+      selectedSessionId = match.session.session_id;
+      const session = match.session;
+      const run = session.active_run;
+      document.getElementById('detail').innerHTML = `
+        <h2>${escapeHtml(shortText(session.request, 90))}</h2>
+        <div class="subtitle">${escapeHtml(match.project.project_name)} / ${escapeHtml(match.worktree.branch || 'unknown branch')} / ${escapeHtml(session.session_id)}</div>
+        <div class="timeline">${stages.map(stage => `<div class="stage ${session.current_state === stage || session.current_stage === stage ? 'current' : ''}">${stage}</div>`).join('')}</div>
+        <div class="card">
+          <h3>Workflow</h3>
+          <span class="pill ${session.current_state}">${escapeHtml(session.current_state)}</span>
+          <p>current_stage: ${escapeHtml(session.current_stage)} / human_decision: ${escapeHtml(session.human_decision)}</p>
+          ${session.blocked_reason ? `<p><b>blocked:</b> ${escapeHtml(session.blocked_reason)}</p>` : ''}
+        </div>
+        <div class="card">
+          <h3>Active Run</h3>
+          ${run ? `<span class="pill ${run.state}">${escapeHtml(run.state)}</span>
+            <p>${escapeHtml(run.stage)} / ${escapeHtml(run.run_id)}</p>
+            <p><b>Gate:</b> ${escapeHtml(run.gate_status || 'not verified')}</p>
+            <p><b>Required outputs:</b> ${(run.required_outputs || []).map(escapeHtml).join(', ')}</p>
+            <p><b>Required evidence:</b> ${(run.required_evidence || []).map(escapeHtml).join(', ')}</p>` : '<p>No active or latest run.</p>'}
+        </div>
+        <div class="card">
+          <h3>Artifacts</h3>
+          ${Object.entries(session.artifact_paths || {}).map(([key, path]) => `<p><button class="link" onclick="loadArtifact('${encodeURIComponent(path)}')">${escapeHtml(key)}</button><br><small>${escapeHtml(path)}</small></p>`).join('') || '<p>No artifacts.</p>'}
+          <pre id="artifact-preview">Select an artifact to preview.</pre>
+        </div>
+        <p class="subtitle">Last refreshed: ${escapeHtml(board.generated_at || '')}</p>
+      `;
+    }
+
+    async function loadArtifact(path) {
+      const response = await fetch('/api/artifact?path=' + path);
+      document.getElementById('artifact-preview').textContent = await response.text();
+    }
+
+    function selectSession(sessionId) {
+      selectedSessionId = sessionId;
+      render();
+    }
+
+    function shortText(value, max = 44) {
+      const text = value || '';
+      return text.length > max ? text.slice(0, max - 3) + '...' : text;
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? '').replace(/[&<>"']/g, char => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+      }[char]));
+    }
+
+    loadBoard();
+    setInterval(loadBoard, 5000);
+  </script>
+</body>
+</html>
+"""
