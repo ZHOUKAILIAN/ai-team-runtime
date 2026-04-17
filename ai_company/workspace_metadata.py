@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 import subprocess
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .models import model_dataclass
 
-@dataclass(slots=True)
+
+@model_dataclass
 class WorkspaceMetadata:
     project_name: str
     project_root: str

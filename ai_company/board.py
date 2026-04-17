@@ -1,18 +1,17 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from .harness_paths import _default_codex_home
-from .models import GateResult, StageRunRecord
+from .models import GateResult, StageRunRecord, model_dataclass
 from .state import StateStore
 from .workspace_metadata import WorkspaceMetadata, load_workspace_metadata
 
 
-@dataclass(slots=True)
+@model_dataclass
 class BoardSnapshot:
     payload: dict[str, Any]
     state_roots: list[Path]
