@@ -50,6 +50,11 @@ class BoardServerTests(unittest.TestCase):
             self.assertIn("产品方案 / PRD", html)
             self.assertIn("运行时元数据", html)
             self.assertIn("预览内容", html)
+            self.assertIn("function renderWorkflowRunBoard", html)
+            self.assertIn("function renderBottleneckSummary", html)
+            self.assertIn("function workflowNodesFor", html)
+            self.assertIn("还没有可跟踪的 QA run", html)
+            self.assertIn("当前 bottleneck", html)
             self.assertIn("Last refreshed: ${escapeHtml(formatRefreshTime(board.generated_at))}", html)
             self.assertEqual(payload["stats"]["sessions"], 1)
 

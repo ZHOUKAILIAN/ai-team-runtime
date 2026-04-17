@@ -192,10 +192,96 @@ BOARD_HTML = """<!doctype html>
       color: var(--muted);
       margin: 16px 0 8px;
     }
+    .workflow-bottleneck {
+      background: linear-gradient(135deg, #fffdf7, #f4efe2);
+    }
+    .workflow-bottleneck.blocked {
+      background: linear-gradient(135deg, #fff5f5, #fbeaea);
+      border-color: #e4bcbc;
+    }
+    .workflow-bottleneck.active {
+      background: linear-gradient(135deg, #eef6ff, #e5eef9);
+      border-color: #bfd0e4;
+    }
+    .workflow-bottleneck.waiting {
+      background: linear-gradient(135deg, #fff9ee, #f7f0e0);
+    }
+    .workflow-summary-title {
+      font-size: 15px;
+      margin: 0 0 8px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .08em;
+    }
+    .workflow-summary-main {
+      font-size: 26px;
+      line-height: 1.3;
+      margin: 0 0 10px;
+    }
+    .workflow-summary-reason {
+      margin: 0 0 8px;
+      color: var(--ink);
+    }
+    .workflow-summary-next {
+      margin: 0;
+      color: var(--ink);
+    }
+    .workflow-board {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .workflow-node {
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 14px;
+    }
+    .workflow-node.current {
+      background: #eef6ff;
+      border-color: var(--blue);
+      box-shadow: 0 0 0 2px rgba(47,111,159,.12);
+    }
+    .workflow-node.blocked {
+      background: #fff6f6;
+      border-color: #d9a9a0;
+    }
+    .workflow-node h4 {
+      margin: 0 0 8px;
+      font-size: 20px;
+    }
+    .workflow-node-owner {
+      color: var(--muted);
+      display: block;
+      font-size: 13px;
+      margin-bottom: 8px;
+    }
+    .workflow-node-status {
+      display: inline-block;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: #efe7d8;
+      font-size: 12px;
+      margin-bottom: 10px;
+    }
+    .workflow-node.current .workflow-node-status {
+      background: #d7e8fb;
+    }
+    .workflow-node.blocked .workflow-node-status {
+      background: #f6d7d2;
+    }
+    .workflow-node p {
+      margin: 0 0 8px;
+    }
+    .workflow-node .next {
+      color: var(--ink);
+      font-weight: 700;
+    }
     @media (max-width: 860px) {
       .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       main { grid-template-columns: 1fr; }
       .timeline { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .workflow-board { grid-template-columns: 1fr; }
       .artifact-grid { grid-template-columns: 1fr; }
     }
   </style>
@@ -215,6 +301,15 @@ BOARD_HTML = """<!doctype html>
     let selectedSessionId = null;
     let currentFilter = 'all';
     const stages = ['Product', 'WaitForCEOApproval', 'Dev', 'QA', 'Acceptance', 'WaitForHumanDecision', 'Done'];
+    const workflowStageDefinitions = [
+      { key: 'Product', title: 'Product', owner: 'Product' },
+      { key: 'WaitForCEOApproval', title: 'CEO 审批', owner: 'CEO / Human' },
+      { key: 'Dev', title: 'Dev', owner: 'Dev' },
+      { key: 'QA', title: 'QA', owner: 'QA' },
+      { key: 'Acceptance', title: 'Acceptance', owner: 'Acceptance' },
+      { key: 'WaitForHumanDecision', title: '最终人工决策', owner: 'Human' },
+      { key: 'Done', title: 'Done', owner: 'System' }
+    ];
     const filterDefinitions = [
       { key: 'all', label: 'All' },
       { key: 'active', label: 'Active' },
@@ -304,12 +399,12 @@ BOARD_HTML = """<!doctype html>
       document.getElementById('detail').innerHTML = `
         <h2>${escapeHtml(shortText(session.request, 90))}</h2>
         <div class="subtitle">${escapeHtml(match.project.project_name)} / ${escapeHtml(match.worktree.branch || 'unknown branch')} / ${escapeHtml(formatSessionMeta(session))}</div>
-        <div class="timeline">${stages.map(stage => `<div class="stage ${session.current_state === stage || session.current_stage === stage ? 'current' : ''}">${stage}</div>`).join('')}</div>
         <div class="card">
-          <h3>Workflow</h3>
-          <span class="pill ${session.current_state}">${escapeHtml(session.current_state)}</span>
-          <p>current_stage: ${escapeHtml(session.current_stage)} / human_decision: ${escapeHtml(session.human_decision)}</p>
-          ${session.blocked_reason ? `<p><b>blocked:</b> ${escapeHtml(session.blocked_reason)}</p>` : ''}
+          ${renderBottleneckSummary(session)}
+        </div>
+        <div class="card">
+          <h3>Workflow Run Board</h3>
+          ${renderWorkflowRunBoard(session)}
         </div>
         <div class="card">
           <h3>Active Run</h3>
@@ -317,7 +412,7 @@ BOARD_HTML = """<!doctype html>
             <p>${escapeHtml(run.stage)} / ${escapeHtml(run.run_id)}</p>
             <p><b>Gate:</b> ${escapeHtml(run.gate_status || 'not verified')}</p>
             <p><b>Required outputs:</b> ${(run.required_outputs || []).map(escapeHtml).join(', ')}</p>
-            <p><b>Required evidence:</b> ${(run.required_evidence || []).map(escapeHtml).join(', ')}</p>` : '<p>No active or latest run.</p>'}
+            <p><b>Required evidence:</b> ${(run.required_evidence || []).map(escapeHtml).join(', ')}</p>` : '<p>当前没有活跃 run。若当前阶段已经进入执行，通常表示还没人认领或这是缺少 stage-run 记录的历史 session。</p>'}
         </div>
         <div class="card">
           <h3>Artifacts</h3>
@@ -334,6 +429,136 @@ BOARD_HTML = """<!doctype html>
       document.getElementById('artifact-preview-title').textContent = decodedTitle || '产物预览';
       const response = await fetch('/api/artifact?path=' + path);
       document.getElementById('artifact-preview').textContent = await response.text();
+    }
+
+    function renderBottleneckSummary(session) {
+      const summary = bottleneckSummaryFor(session);
+      return `
+        <div class="workflow-bottleneck ${summary.tone}">
+          <p class="workflow-summary-title">当前 bottleneck</p>
+          <p class="workflow-summary-main">${escapeHtml(summary.headline)}</p>
+          <p class="workflow-summary-reason"><b>原因：</b>${escapeHtml(summary.reason)}</p>
+          <p class="workflow-summary-next"><b>下一步：</b>${escapeHtml(summary.nextAction)}</p>
+        </div>
+      `;
+    }
+
+    function renderWorkflowRunBoard(session) {
+      return `<div class="workflow-board">${workflowNodesFor(session).map(renderWorkflowNode).join('')}</div>`;
+    }
+
+    function renderWorkflowNode(node) {
+      return `
+        <div class="workflow-node ${node.isCurrent ? 'current' : ''} ${node.tone}">
+          <h4>${escapeHtml(node.title)}</h4>
+          <span class="workflow-node-owner">负责人：${escapeHtml(node.owner)}</span>
+          <span class="workflow-node-status">${escapeHtml(node.statusLabel)}</span>
+          <p>${escapeHtml(node.reason)}</p>
+          <p><b>交付：</b>${escapeHtml(node.deliverables)}</p>
+          <p class="next">下一步：${escapeHtml(node.nextAction)}</p>
+        </div>
+      `;
+    }
+
+    function workflowNodesFor(session) {
+      return workflowStageDefinitions.map((definition, index) => {
+        const isCurrent = isCurrentWorkflowNode(definition.key, session);
+        return {
+          ...definition,
+          isCurrent,
+          ...workflowNodeState(definition.key, index, session, isCurrent)
+        };
+      });
+    }
+
+    function workflowNodeState(stageKey, index, session, isCurrent) {
+      const currentIndex = workflowStageIndexFor(session);
+      const hasDeliverables = stageDeliverables(session, stageKey);
+      if (session.current_state === 'Blocked' && stageKey === session.current_stage) {
+        return {
+          statusLabel: '已阻塞',
+          reason: session.blocked_reason || `${stageKey} 阶段被阻塞。`,
+          deliverables: hasDeliverables,
+          nextAction: `先处理阻塞原因，再决定是否继续由 ${workflowOwnerFor(stageKey)} 推进。`,
+          tone: 'blocked'
+        };
+      }
+      if (isCurrent) {
+        if (session.active_run && session.active_run.stage === stageKey) {
+          return currentNodeStateFromRun(stageKey, session.active_run, hasDeliverables);
+        }
+        if (stageKey === 'WaitForCEOApproval' || stageKey === 'WaitForHumanDecision') {
+          return {
+            statusLabel: '等待人工确认',
+            reason: waitingHumanReason(stageKey),
+            deliverables: hasDeliverables,
+            nextAction: waitingHumanNextAction(stageKey),
+            tone: 'waiting'
+          };
+        }
+        if (stageKey !== 'Done') {
+          return {
+            statusLabel: '等待处理',
+            reason: missingRunReason(stageKey),
+            deliverables: hasDeliverables,
+            nextAction: missingRunNextAction(stageKey),
+            tone: 'waiting'
+          };
+        }
+      }
+      if (stageKey === 'Done') {
+        if (session.current_state === 'Done') {
+          return {
+            statusLabel: '已完成',
+            reason: '这条 workflow 已经结束。',
+            deliverables: '流程已结束',
+            nextAction: '无需进一步处理。',
+            tone: ''
+          };
+        }
+        return {
+          statusLabel: '未开始',
+          reason: '还没有进入完成态。',
+          deliverables: '尚无',
+          nextAction: '先推进前面的 workflow 节点。',
+          tone: ''
+        };
+      }
+      if (index < currentIndex || isCompletedByArtifacts(session, stageKey)) {
+        return {
+          statusLabel: '已完成',
+          reason: completedReasonFor(stageKey),
+          deliverables: hasDeliverables,
+          nextAction: '等待后续节点继续推进。',
+          tone: ''
+        };
+      }
+      return {
+        statusLabel: '未开始',
+        reason: '前置节点还没有完成，尚未轮到这个阶段。',
+        deliverables: '尚无',
+        nextAction: `先完成 ${previousWorkflowStage(stageKey)}。`,
+        tone: ''
+      };
+    }
+
+    function currentNodeStateFromRun(stageKey, run, deliverables) {
+      if (run.state === 'SUBMITTED' || run.state === 'VERIFYING') {
+        return {
+          statusLabel: '等待验证',
+          reason: `${stageKey} 结果已提交，正在等待 gate 验证。`,
+          deliverables,
+          nextAction: '等待 gatekeeper 完成验证。',
+          tone: 'active'
+        };
+      }
+      return {
+        statusLabel: '进行中',
+        reason: `${stageKey} 已被认领，当前正在处理。`,
+        deliverables,
+        nextAction: `${workflowOwnerFor(stageKey)} 提交阶段结果。`,
+        tone: 'active'
+      };
     }
 
     function renderArtifactSections(session) {
@@ -428,6 +653,63 @@ BOARD_HTML = """<!doctype html>
       return text.split('/').filter(Boolean).pop() || text;
     }
 
+    function bottleneckSummaryFor(session) {
+      if (session.current_state === 'Blocked') {
+        return {
+          headline: `当前已阻塞在 ${humanStageName(session.current_stage)}。`,
+          reason: session.blocked_reason || '流程被阻塞，需要人工处理。',
+          nextAction: `先解决阻塞原因，再决定是否由 ${workflowOwnerFor(session.current_stage)} 继续推进。`,
+          tone: 'blocked'
+        };
+      }
+      if (session.active_run) {
+        if (session.active_run.state === 'SUBMITTED' || session.active_run.state === 'VERIFYING') {
+          return {
+            headline: `当前停在 ${humanStageName(session.active_run.stage)}，等待 gate 验证。`,
+            reason: `${humanStageName(session.active_run.stage)} 已提交结果，gate 还没有完成验证。`,
+            nextAction: '等待 gatekeeper 完成验证并推进到下一节点。',
+            tone: 'active'
+          };
+        }
+        return {
+          headline: `当前由 ${workflowOwnerFor(session.active_run.stage)} 处理 ${humanStageName(session.active_run.stage)}。`,
+          reason: `${humanStageName(session.active_run.stage)} 已被认领，正在执行。`,
+          nextAction: `${workflowOwnerFor(session.active_run.stage)} 提交阶段结果。`,
+          tone: 'active'
+        };
+      }
+      if (session.current_state === 'WaitForCEOApproval' || session.current_state === 'WaitForHumanDecision') {
+        return {
+          headline: `当前等待${workflowOwnerFor(session.current_state)}决策。`,
+          reason: waitingHumanReason(session.current_state),
+          nextAction: waitingHumanNextAction(session.current_state),
+          tone: 'waiting'
+        };
+      }
+      if (session.current_stage && session.current_stage !== 'Intake' && session.current_stage !== 'Done') {
+        return {
+          headline: `当前停在 ${humanStageName(session.current_stage)}。`,
+          reason: missingRunReason(session.current_stage),
+          nextAction: missingRunNextAction(session.current_stage),
+          tone: 'waiting'
+        };
+      }
+      if (session.current_state === 'Done') {
+        return {
+          headline: '当前 workflow 已完成。',
+          reason: '所有阶段已经结束。',
+          nextAction: '无需进一步处理。',
+          tone: 'active'
+        };
+      }
+      return {
+        headline: '当前还在 Intake。',
+        reason: '这条 session 还没有进入可执行的 workflow 节点。',
+        nextAction: '先由 Product 开始产出 PRD。',
+        tone: 'waiting'
+      };
+    }
+
     function visibleSessions() {
       return allSessions().filter(item => sessionMatchesCurrentFilter(item.session));
     }
@@ -471,6 +753,83 @@ BOARD_HTML = """<!doctype html>
     function shortText(value, max = 44) {
       const text = value || '';
       return text.length > max ? text.slice(0, max - 3) + '...' : text;
+    }
+
+    function workflowStageIndexFor(session) {
+      const key = session.current_state === 'Blocked' ? session.current_stage : session.current_state;
+      const index = workflowStageDefinitions.findIndex(item => item.key === key);
+      return index >= 0 ? index : 0;
+    }
+
+    function isCurrentWorkflowNode(stageKey, session) {
+      if (session.current_state === 'Blocked') return stageKey === session.current_stage;
+      return stageKey === session.current_state || stageKey === session.current_stage;
+    }
+
+    function humanStageName(stageKey) {
+      return workflowStageDefinitions.find(item => item.key === stageKey)?.title || stageKey || '当前阶段';
+    }
+
+    function workflowOwnerFor(stageKey) {
+      return workflowStageDefinitions.find(item => item.key === stageKey)?.owner || '当前负责人';
+    }
+
+    function waitingHumanReason(stageKey) {
+      if (stageKey === 'WaitForCEOApproval') {
+        return 'Product 已产出，需要人工确认是否进入研发。';
+      }
+      return 'Acceptance 已完成，等待最终人工决策。';
+    }
+
+    function waitingHumanNextAction(stageKey) {
+      if (stageKey === 'WaitForCEOApproval') {
+        return '由审批人决定 go / rework / no-go。';
+      }
+      return '由人工决定 go / no-go / rework。';
+    }
+
+    function missingRunReason(stageKey) {
+      if (stageKey === 'QA') {
+        return '当前阶段已经进入 QA，但还没有可跟踪的 QA run。';
+      }
+      return `当前阶段已经进入 ${humanStageName(stageKey)}，但还没有可跟踪的 ${stageKey} run。`;
+    }
+
+    function missingRunNextAction(stageKey) {
+      return `由 ${workflowOwnerFor(stageKey)} 认领并开始${humanStageName(stageKey)}。`;
+    }
+
+    function completedReasonFor(stageKey) {
+      if (stageKey === 'WaitForCEOApproval') return '人工审批已经放行，流程继续推进。';
+      if (stageKey === 'WaitForHumanDecision') return '最终人工决策已经完成。';
+      return `${humanStageName(stageKey)} 已经完成并流转到后续节点。`;
+    }
+
+    function previousWorkflowStage(stageKey) {
+      const index = workflowStageDefinitions.findIndex(item => item.key === stageKey);
+      if (index <= 0) return '前置阶段';
+      return humanStageName(workflowStageDefinitions[index - 1].key);
+    }
+
+    function isCompletedByArtifacts(session, stageKey) {
+      if (stageKey === 'Product') return Boolean(session.artifact_paths?.product);
+      if (stageKey === 'Dev') return Boolean(session.artifact_paths?.dev);
+      if (stageKey === 'QA') return Boolean(session.artifact_paths?.qa);
+      if (stageKey === 'Acceptance') return Boolean(session.artifact_paths?.acceptance);
+      if (stageKey === 'WaitForCEOApproval') return workflowStageIndexFor(session) > 1;
+      if (stageKey === 'WaitForHumanDecision') return session.current_state === 'Done';
+      return false;
+    }
+
+    function stageDeliverables(session, stageKey) {
+      if (stageKey === 'Product') return session.artifact_paths?.product ? 'PRD 已产出' : '尚无 PRD';
+      if (stageKey === 'Dev') return session.artifact_paths?.dev ? '实现说明已产出' : '尚无实现说明';
+      if (stageKey === 'QA') return session.artifact_paths?.qa ? 'QA 验证结果已产出' : '尚无 QA 验证结果';
+      if (stageKey === 'Acceptance') return session.artifact_paths?.acceptance ? '验收建议已产出' : '尚无验收建议';
+      if (stageKey === 'WaitForCEOApproval') return '无需文件产物';
+      if (stageKey === 'WaitForHumanDecision') return '无需文件产物';
+      if (stageKey === 'Done') return session.current_state === 'Done' ? '流程已结束' : '尚未结束';
+      return '尚无';
     }
 
     function formatSessionMeta(session) {
