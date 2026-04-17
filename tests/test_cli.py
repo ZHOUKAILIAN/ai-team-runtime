@@ -53,6 +53,18 @@ class CliTests(unittest.TestCase):
         self.assertIn("start-session", result.stdout)
         self.assertIn("codex-init", result.stdout)
 
+    def test_cli_help_lists_readonly_board_commands(self) -> None:
+        result = subprocess.run(
+            [sys.executable, "-m", "ai_company", "--help"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("board-snapshot", result.stdout)
+        self.assertIn("serve-board", result.stdout)
+
     def test_agent_run_accepts_raw_user_message(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
 
@@ -236,6 +248,52 @@ class CliTests(unittest.TestCase):
             self.assertIn("current_state: Intake", result.stdout)
             self.assertIn("current_stage: Intake", result.stdout)
             self.assertIn("human_decision: pending", result.stdout)
+
+    def test_board_snapshot_outputs_all_workspace_board_json(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+
+        with TemporaryDirectory(dir=local_temp_dir()) as codex_home:
+            env = os.environ.copy()
+            env["CODEX_HOME"] = codex_home
+            start_result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "ai_company",
+                    "--repo-root",
+                    str(repo_root),
+                    "start-session",
+                    "--message",
+                    "执行这个需求：做一个只读看板",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                env=env,
+            )
+            self.assertEqual(start_result.returncode, 0)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "ai_company",
+                    "--repo-root",
+                    str(repo_root),
+                    "board-snapshot",
+                    "--all-workspaces",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                env=env,
+            )
+
+            self.assertEqual(result.returncode, 0)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["stats"]["projects"], 1)
+            self.assertEqual(payload["stats"]["sessions"], 1)
+            self.assertEqual(payload["projects"][0]["project_name"], repo_root.name)
 
     def test_build_stage_contract_outputs_machine_readable_json(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]

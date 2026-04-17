@@ -6,6 +6,8 @@ from dataclasses import replace
 from pathlib import Path
 
 from .backend import DeterministicBackend
+from .board import build_board_snapshot
+from .board_server import create_board_server
 from .gatekeeper import evaluate_candidate
 from .harness_paths import default_state_root
 from .intake import parse_intake_message
@@ -15,6 +17,7 @@ from .project_scaffold import scaffold_project_codex_files
 from .stage_contracts import build_stage_contract
 from .stage_machine import StageMachine
 from .state import StageRunStateError, StateStore
+from .workspace_metadata import refresh_workspace_metadata
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -26,6 +29,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.state_root is not None
         else default_state_root(repo_root=args.repo_root).resolve()
     )
+    if _should_refresh_workspace_metadata(args.command):
+        refresh_workspace_metadata(state_root=args.state_root, repo_root=args.repo_root)
     return args.handler(args)
 
 
@@ -195,6 +200,27 @@ def build_parser() -> argparse.ArgumentParser:
         help="Explicit closure signal for the learning overlay.",
     )
     feedback_parser.set_defaults(handler=_handle_record_feedback)
+
+    board_snapshot_parser = subparsers.add_parser(
+        "board-snapshot",
+        help="Print the read-only board snapshot as JSON.",
+    )
+    board_snapshot_parser.add_argument(
+        "--all-workspaces",
+        action="store_true",
+        help="Aggregate every workspace under CODEX_HOME.",
+    )
+    board_snapshot_parser.set_defaults(handler=_handle_board_snapshot)
+
+    serve_board_parser = subparsers.add_parser(
+        "serve-board",
+        help="Serve the local read-only board.",
+    )
+    serve_board_parser.add_argument("--all-workspaces", action="store_true")
+    serve_board_parser.add_argument("--host", default="127.0.0.1")
+    serve_board_parser.add_argument("--port", type=int, default=8765)
+    serve_board_parser.add_argument("--poll-interval", type=int, default=5)
+    serve_board_parser.set_defaults(handler=_handle_serve_board)
 
     review_parser = subparsers.add_parser("review", help="Print the latest or a selected review.")
     review_parser.add_argument("--session-id", help="Specific session ID to inspect.")
@@ -526,6 +552,28 @@ def _handle_record_feedback(args: argparse.Namespace) -> int:
     return 0
 
 
+def _handle_board_snapshot(args: argparse.Namespace) -> int:
+    if not args.all_workspaces:
+        raise SystemExit("board-snapshot currently requires --all-workspaces.")
+    print(json.dumps(build_board_snapshot(), indent=2))
+    return 0
+
+
+def _handle_serve_board(args: argparse.Namespace) -> int:
+    if not args.all_workspaces:
+        raise SystemExit("serve-board currently requires --all-workspaces.")
+    server = create_board_server(host=args.host, port=args.port)
+    print(f"board_url: http://{args.host}:{server.server_address[1]}")
+    print(f"poll_interval_seconds: {args.poll_interval}")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        return 0
+    finally:
+        server.server_close()
+    return 0
+
+
 def _execute_workflow(
     *,
     repo_root: Path,
@@ -575,3 +623,7 @@ def _expected_submission_stage(summary: WorkflowSummary) -> str | None:
     if summary.current_state == "Acceptance":
         return "Acceptance"
     return None
+
+
+def _should_refresh_workspace_metadata(command: str) -> bool:
+    return command not in {"board-snapshot", "serve-board"}
