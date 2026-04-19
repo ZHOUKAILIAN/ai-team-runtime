@@ -23,6 +23,8 @@ def copy_packaged_tree(parts: tuple[str, ...], destination: Path) -> list[Path]:
             continue
 
         target.write_text(item.read_text())
+        if target.suffix == ".sh":
+            target.chmod(0o755)
         written.append(target)
 
     return written

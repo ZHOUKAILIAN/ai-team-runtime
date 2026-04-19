@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from .backend import DeterministicBackend
+from .codex_skill_installer import install_codex_skill
 from .harness_paths import default_state_root
 from .intake import parse_intake_message
 from .models import Finding, StageResultEnvelope, WorkflowSummary
@@ -51,6 +52,12 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     codex_init_parser.set_defaults(handler=_handle_codex_init)
+
+    install_skill_parser = subparsers.add_parser(
+        "install-codex-skill",
+        help="Install the packaged ai-company-workflow skill into CODEX_HOME.",
+    )
+    install_skill_parser.set_defaults(handler=_handle_install_codex_skill)
 
     run_parser = subparsers.add_parser(
         "run",
@@ -198,6 +205,14 @@ def _handle_codex_init(args: argparse.Namespace) -> int:
     print("recommended_run_entry: $ai-team-run")
     print(f"manual_init_fallback: {args.repo_root / 'scripts' / 'company-init.sh'}")
     print(f"manual_run_fallback: {args.repo_root / 'scripts' / 'company-run.sh'} \"<your message>\"")
+    return 0
+
+
+def _handle_install_codex_skill(args: argparse.Namespace) -> int:
+    del args
+    target = install_codex_skill()
+    print(f"installed_skill: {target / 'SKILL.md'}")
+    print(f"installed_helper: {target / 'scripts' / 'company-run.sh'}")
     return 0
 
 
