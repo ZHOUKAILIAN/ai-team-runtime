@@ -255,6 +255,44 @@ class SkillPackageTests(unittest.TestCase):
             )
             self.assertEqual(yaml_result.returncode, 0, yaml_result.stderr)
 
+    def test_cli_install_codex_skill_uses_packaged_assets(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+
+        with TemporaryDirectory() as temp_dir:
+            env = os.environ.copy()
+            env["HOME"] = temp_dir
+            env.pop("CODEX_HOME", None)
+            result = subprocess.run(
+                [
+                    os.environ.get("PYTHON", "python3"),
+                    "-m",
+                    "ai_company",
+                    "--repo-root",
+                    str(repo_root),
+                    "install-codex-skill",
+                ],
+                cwd=repo_root,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            installed_skill = Path(temp_dir) / ".codex" / "skills" / "ai-company-workflow" / "SKILL.md"
+            installed_helper = (
+                Path(temp_dir)
+                / ".codex"
+                / "skills"
+                / "ai-company-workflow"
+                / "scripts"
+                / "company-run.sh"
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(installed_skill.exists())
+            self.assertTrue(installed_helper.exists())
+            self.assertTrue(os.access(installed_helper, os.X_OK))
+            self.assertIn("installed_skill:", result.stdout)
+
     def test_global_install_script_vendors_repo_and_skill(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
         script = repo_root / "scripts" / "install-codex-ai-team.sh"
