@@ -165,7 +165,7 @@ session 文件集中在：
 
 ## 安装与使用
 
-推荐通过 GitHub Releases 安装正式版本。
+推荐通过 GitHub Releases 安装正式版本。beta 版本会以 GitHub pre-release 发布，不会覆盖 latest。
 
 安装前提：
 
@@ -176,13 +176,19 @@ session 文件集中在：
 安装最新版本：
 
 ```bash
-curl -fsSL https://github.com/ZHOUKAILIAN/AI_Team/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/ZHOUKAILIAN/ai-team-runtime/releases/latest/download/install.sh | sh
+```
+
+安装当前 beta 版本：
+
+```bash
+curl -fsSL https://github.com/ZHOUKAILIAN/ai-team-runtime/releases/download/v0.2.0b1/install.sh | sh
 ```
 
 安装固定版本：
 
 ```bash
-curl -fsSL https://github.com/ZHOUKAILIAN/AI_Team/releases/download/v0.1.0/install.sh | sh
+curl -fsSL https://github.com/ZHOUKAILIAN/ai-team-runtime/releases/download/v0.1.0/install.sh | sh
 ```
 
 安装完成后，稳定命令入口是：
