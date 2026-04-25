@@ -1,5 +1,6 @@
 import subprocess
 import sys
+from tempfile import TemporaryDirectory
 import unittest
 from pathlib import Path
 
@@ -7,8 +8,62 @@ from pathlib import Path
 class ReleaseToolingTests(unittest.TestCase):
     def test_verify_release_version_accepts_matching_tag(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
+        with TemporaryDirectory() as temp_dir:
+            pyproject = Path(temp_dir) / "pyproject.toml"
+            pyproject.write_text('[project]\nname = "ai-company"\nversion = "0.1.0"\n')
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/release/verify_release_version.py",
+                    "--tag",
+                    "v0.1.0",
+                    "--pyproject",
+                    str(pyproject),
+                ],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "0.1.0")
+
+    def test_verify_release_version_accepts_matching_beta_tag(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        with TemporaryDirectory() as temp_dir:
+            pyproject = Path(temp_dir) / "pyproject.toml"
+            pyproject.write_text('[project]\nname = "ai-company"\nversion = "0.2.0b1"\n')
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/release/verify_release_version.py",
+                    "--tag",
+                    "v0.2.0b1",
+                    "--pyproject",
+                    str(pyproject),
+                ],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "0.2.0b1")
+
+    def test_release_type_outputs_github_args_for_beta_versions(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
         result = subprocess.run(
-            [sys.executable, "scripts/release/verify_release_version.py", "--tag", "v0.1.0"],
+            [
+                sys.executable,
+                "scripts/release/release_type.py",
+                "--version",
+                "0.2.0b1",
+                "--github-args",
+            ],
             cwd=repo_root,
             capture_output=True,
             text=True,
@@ -16,7 +71,26 @@ class ReleaseToolingTests(unittest.TestCase):
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.strip(), "0.1.0")
+        self.assertEqual(result.stdout.strip(), "--prerelease --latest=false")
+
+    def test_release_type_outputs_no_github_args_for_stable_versions(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        result = subprocess.run(
+            [
+                sys.executable,
+                "scripts/release/release_type.py",
+                "--version",
+                "0.2.0",
+                "--github-args",
+            ],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
 
     def test_extract_release_changelog_emits_only_requested_version(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
@@ -25,7 +99,7 @@ class ReleaseToolingTests(unittest.TestCase):
                 sys.executable,
                 "scripts/release/extract_release_changelog.py",
                 "--version",
-                "0.1.0",
+                "0.2.0b1",
                 "--changelog",
                 str(repo_root / "CHANGELOG.md"),
             ],
@@ -36,7 +110,7 @@ class ReleaseToolingTests(unittest.TestCase):
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("## [0.1.0] - 2026-04-19", result.stdout)
+        self.assertIn("## [0.2.0b1] - 2026-04-26", result.stdout)
         self.assertNotIn("## [Unreleased]", result.stdout)
 
     def test_render_install_script_embeds_release_coordinates(self) -> None:

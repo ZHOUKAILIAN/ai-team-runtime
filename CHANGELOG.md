@@ -4,6 +4,13 @@
 
 - No unreleased entries yet.
 
+## [0.2.0b1] - 2026-04-26
+
+- Added policy-driven stage evaluation with sandbox judge support.
+- Added stage execution context handoff for downstream development agents.
+- Added runtime observability and board/panel support improvements.
+- Added OpenAI Agents SDK sandbox judge configuration support.
+
 ## [0.1.0] - 2026-04-19
 
 - Added the first GitHub-Releases-only distribution contract for AI_Team.
