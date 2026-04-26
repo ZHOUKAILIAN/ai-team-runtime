@@ -303,6 +303,82 @@ class SkillPackageTests(unittest.TestCase):
             self.assertTrue(os.access(installed_helper, os.X_OK))
             self.assertIn("installed_skill:", result.stdout)
 
+    def test_packaged_company_run_helper_uses_current_workspace_repo_root(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+
+        with TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            project_root = temp_root / "target-project"
+            project_root.mkdir()
+            fake_bin = temp_root / "bin"
+            fake_bin.mkdir()
+            argv_path = temp_root / "ai-team-argv.txt"
+            fake_ai_team = fake_bin / "ai-team"
+            fake_ai_team.write_text(
+                "#!/usr/bin/env bash\n"
+                "printf '%s\\n' \"$@\" > \"$AI_TEAM_ARGV_PATH\"\n"
+                "printf '%s\\n' 'session_id: fake-session'\n"
+                "printf '%s\\n' \"artifact_dir: ${PWD}/.ai-team/fake-session\"\n"
+                "printf '%s\\n' \"summary_path: ${PWD}/.ai-team/fake-session/workflow_summary.md\"\n"
+            )
+            fake_ai_team.chmod(0o755)
+
+            env = os.environ.copy()
+            env["HOME"] = str(temp_root / "home")
+            env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
+            env["AI_TEAM_ARGV_PATH"] = str(argv_path)
+            env.pop("CODEX_HOME", None)
+            install_result = subprocess.run(
+                [
+                    os.environ.get("PYTHON", "python3"),
+                    "-m",
+                    "ai_company",
+                    "--repo-root",
+                    str(repo_root),
+                    "install-codex-skill",
+                ],
+                cwd=repo_root,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(install_result.returncode, 0, install_result.stderr)
+
+            helper_script = (
+                Path(env["HOME"])
+                / ".codex"
+                / "skills"
+                / "ai-company-workflow"
+                / "scripts"
+                / "company-run.sh"
+            )
+            helper_text = helper_script.read_text()
+            self.assertNotIn("-d \"${VENDOR_DIR}/Product\"", helper_text)
+            self.assertNotIn("RUNTIME_DIR", helper_text)
+
+            run_result = subprocess.run(
+                [str(helper_script), "执行这个需求：验证全局 helper 使用当前项目根目录"],
+                cwd=project_root,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(run_result.returncode, 0, run_result.stderr)
+            self.assertIn("session_id:", run_result.stdout)
+            self.assertEqual(
+                argv_path.read_text().splitlines(),
+                [
+                    "--repo-root",
+                    str(project_root.resolve()),
+                    "start-session",
+                    "--message",
+                    "执行这个需求：验证全局 helper 使用当前项目根目录",
+                ],
+            )
+
     def test_global_install_script_vendors_repo_and_skill(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
         script = repo_root / "scripts" / "install-codex-ai-team.sh"
