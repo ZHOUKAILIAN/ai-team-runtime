@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from ai_company.codex_exec import CodexExecConfig, CodexExecResult, CodexExecRunner
+from agent_team.codex_exec import CodexExecConfig, CodexExecResult, CodexExecRunner
 
 
 class CodexExecTests(unittest.TestCase):

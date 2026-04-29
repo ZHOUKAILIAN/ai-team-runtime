@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from ai_company.executor import ClaudeCodeExecutor, CodexExecutor, ExecutorResult, StageExecutor, _extract_last_message
+from agent_team.executor import ClaudeCodeExecutor, CodexExecutor, ExecutorResult, StageExecutor, _extract_last_message
 
 
 class ExecutorTests(unittest.TestCase):
