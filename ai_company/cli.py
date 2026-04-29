@@ -8,15 +8,18 @@ from pathlib import Path
 from .backend import DeterministicBackend
 from .board import build_board_snapshot
 from .board_server import create_board_server
+from .codex_exec import CodexExecRunner
 from .execution_context import build_stage_execution_context
 from .gatekeeper import evaluate_candidate
 from .codex_skill_installer import install_codex_skill
 from .harness_paths import default_state_root
 from .intake import parse_intake_message
+from .interactive import CodexAlignmentRunner, CodexTechPlanRunner, DevController, DevControllerConfig, InteractivePrompter
 from .models import Finding, GateResult, StageResultEnvelope, WorkflowSummary
 from .orchestrator import WorkflowOrchestrator
 from .panel import build_panel_snapshot, run_panel_server
 from .project_scaffold import scaffold_project_codex_files
+from .stage_harness import StageHarness
 from .stage_contracts import build_stage_contract
 from .stage_machine import StageMachine
 from .state import StageRunStateError, StateStore
@@ -106,6 +109,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="Who initiated this workflow session.",
     )
     start_session_parser.set_defaults(handler=_handle_start_session)
+
+    dev_parser = subparsers.add_parser(
+        "dev",
+        help=(
+            "Interactive development workflow: clarify requirements, discuss technical approach, "
+            "then execute via AI agents."
+        ),
+    )
+    dev_parser.add_argument("--message", help="Initial requirement. Prompt if omitted.")
+    dev_parser.add_argument("--session-id", help="Existing session to resume.")
+    dev_parser.add_argument("--codex-bin", default="codex", help="Path to codex executable.")
+    dev_parser.add_argument("--model", default="", help="Optional model override.")
+    dev_parser.add_argument("--sandbox", default="workspace-write", help="Codex sandbox mode.")
+    dev_parser.add_argument("--approval", default="never", help="Codex approval policy.")
+    dev_parser.add_argument("--profile", default="", help="Optional Codex config profile.")
+    dev_parser.add_argument("--dry-run", action="store_true", help="Print plan without executing.")
+    dev_parser.set_defaults(handler=_handle_dev)
 
     current_stage_parser = subparsers.add_parser(
         "current-stage",
@@ -449,6 +469,61 @@ def _handle_start_session(args: argparse.Namespace) -> int:
     print(f"session_id: {session.session_id}")
     print(f"artifact_dir: {session.artifact_dir}")
     print(f"summary_path: {summary_path}")
+    return 0
+
+
+def _handle_dev(args: argparse.Namespace) -> int:
+    if args.dry_run:
+        print("ai-team dev dry run")
+        print(f"repo_root: {args.repo_root}")
+        print(f"codex_bin: {args.codex_bin}")
+        return 0
+
+    store = StateStore(args.state_root)
+    codex_runner = CodexExecRunner()
+    alignment_runner = CodexAlignmentRunner(
+        repo_root=args.repo_root,
+        codex_runner=codex_runner,
+        codex_bin=args.codex_bin,
+        model=args.model,
+        sandbox=args.sandbox,
+        approval=args.approval,
+        profile=args.profile,
+    )
+    tech_plan_runner = CodexTechPlanRunner(
+        repo_root=args.repo_root,
+        codex_runner=codex_runner,
+        codex_bin=args.codex_bin,
+        model=args.model,
+        sandbox=args.sandbox,
+        approval=args.approval,
+        profile=args.profile,
+    )
+    stage_harness = StageHarness(
+        repo_root=args.repo_root,
+        state_store=store,
+        codex_runner=codex_runner,
+        codex_bin=args.codex_bin,
+        model=args.model,
+        sandbox=args.sandbox,
+        approval=args.approval,
+        profile=args.profile,
+    )
+    controller = DevController(
+        config=DevControllerConfig(
+            repo_root=args.repo_root,
+            state_store=store,
+            message=args.message or "",
+            session_id=args.session_id or "",
+        ),
+        prompter=InteractivePrompter(),
+        alignment_runner=alignment_runner,
+        tech_plan_runner=tech_plan_runner,
+        stage_harness=stage_harness,
+    )
+    session_id = controller.run()
+    print(f"session_id: {session_id}")
+    print(f"panel: ai-team panel --session-id {session_id}")
     return 0
 
 

@@ -69,6 +69,30 @@ class CliTests(unittest.TestCase):
         self.assertIn("board-snapshot", result.stdout)
         self.assertIn("serve-board", result.stdout)
 
+    def test_cli_help_lists_dev_command(self) -> None:
+        result = subprocess.run(
+            [sys.executable, "-m", "ai_company", "--help"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("dev", result.stdout)
+
+    def test_dev_help_exits_successfully(self) -> None:
+        result = subprocess.run(
+            [sys.executable, "-m", "ai_company", "dev", "--help"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("--message", result.stdout)
+        self.assertIn("--session-id", result.stdout)
+        self.assertIn("--codex-bin", result.stdout)
+
     def test_agent_run_accepts_raw_user_message(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
 
