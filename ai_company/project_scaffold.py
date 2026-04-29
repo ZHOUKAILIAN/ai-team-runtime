@@ -24,7 +24,8 @@ def _project_files() -> dict[Path, str]:
 
 
 def _product_agent() -> str:
-    return '''description = "Drafts the Product PRD for the active AI_Team session and stops for CEO approval."
+    return '''name = "ai_team_product"
+description = "Drafts the Product PRD for the active AI_Team session and stops for CEO approval."
 model = "gpt-5.4"
 model_reasoning_effort = "high"
 sandbox_mode = "workspace-write"
@@ -52,7 +53,8 @@ Rules:
 
 
 def _dev_agent() -> str:
-    return '''description = "Implements the approved PRD for the active AI_Team session and writes the Dev handoff."
+    return '''name = "ai_team_dev"
+description = "Implements the approved PRD for the active AI_Team session and writes the Dev handoff."
 model = "gpt-5.4"
 model_reasoning_effort = "high"
 sandbox_mode = "workspace-write"
@@ -81,7 +83,8 @@ Rules:
 
 
 def _qa_agent() -> str:
-    return '''description = "Independently reruns critical verification for the active AI_Team session and returns evidence-backed QA findings."
+    return '''name = "ai_team_qa"
+description = "Independently reruns critical verification for the active AI_Team session and returns evidence-backed QA findings."
 model = "gpt-5.4"
 model_reasoning_effort = "high"
 sandbox_mode = "workspace-write"
@@ -109,7 +112,8 @@ Rules:
 
 
 def _acceptance_agent() -> str:
-    return '''description = "Produces the final AI acceptance recommendation for the active AI_Team session and waits for the human Go/No-Go decision."
+    return '''name = "ai_team_acceptance"
+description = "Produces the final AI acceptance recommendation for the active AI_Team session and waits for the human Go/No-Go decision."
 model = "gpt-5.4"
 model_reasoning_effort = "high"
 sandbox_mode = "workspace-write"

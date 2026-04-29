@@ -1,6 +1,7 @@
 import os
 import subprocess
 import sys
+import tomllib
 import unittest
 import json
 from pathlib import Path
@@ -1591,6 +1592,19 @@ class CliTests(unittest.TestCase):
             self.assertFalse((repo_root / ".codex" / "config.toml").exists())
             product_agent_lines = (repo_root / ".codex" / "agents" / "ai_team_product.toml").read_text().splitlines()
             product_agent = (repo_root / ".codex" / "agents" / "ai_team_product.toml").read_text()
+            agent_names = {
+                path.stem: tomllib.loads(path.read_text()).get("name")
+                for path in (repo_root / ".codex" / "agents").glob("ai_team_*.toml")
+            }
+            self.assertEqual(
+                agent_names,
+                {
+                    "ai_team_product": "ai_team_product",
+                    "ai_team_dev": "ai_team_dev",
+                    "ai_team_qa": "ai_team_qa",
+                    "ai_team_acceptance": "ai_team_acceptance",
+                },
+            )
             self.assertIn('developer_instructions = """', product_agent_lines)
             self.assertNotIn('instructions = """', product_agent_lines)
             self.assertIn("runtime stage contract", product_agent)
