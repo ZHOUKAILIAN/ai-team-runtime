@@ -36,9 +36,10 @@ Use this skill when the active workspace contains the AI_Team runtime or the ins
 
 ## Available assets
 
-- `scripts/company-run.sh`: skill-bundled bootstrap helper; the helper script only bootstraps a session and does not complete QA or Acceptance by itself.
-- project runtime helpers: optional workspace-local setup and session bootstrap helpers when the current workspace is the AI_Team runtime repository.
-- runtime CLI: exposes `ai-team dev` for human terminal workflows, plus session bootstrap, state lookup, stage contract generation, stage result submission, and feedback recording.
+- `scripts/company-run.sh`: skill-bundled runtime-driver helper; by default it calls `ai-team run-requirement` with the `codex-exec` executor and stops at human gates.
+- project runtime helpers: optional workspace-local setup and runtime-driver helpers when the current workspace is the AI_Team runtime repository.
+- runtime CLI: exposes `ai-team dev` for human terminal workflows, plus `ai-team run-requirement` for runtime-driver execution, session bootstrap, state lookup, stage contract generation, stage result submission, verification, and feedback recording.
+- stage-run trace: `<session_id>/stage_runs/<run_id>_trace.json` records non-skippable `contract -> context -> acquire -> execute -> submit -> verify -> advance` steps.
 - generated local agents: optional Product, Dev, QA, and Acceptance agents for project-scoped execution.
 - generated local run skill: optional `ai-team-run` entrypoint for project-root workflow runs.
 
