@@ -134,6 +134,7 @@ class SessionRecord:
     session_dir: Path
     artifact_dir: Path
     raw_message: str | None = None
+    initiator: str = "agent"
 
     def to_dict(self) -> dict[str, Any]:
         payload = {
@@ -142,6 +143,7 @@ class SessionRecord:
             "created_at": self.created_at,
             "session_dir": str(self.session_dir),
             "artifact_dir": str(self.artifact_dir),
+            "initiator": self.initiator,
         }
         if self.raw_message is not None:
             payload["raw_message"] = self.raw_message

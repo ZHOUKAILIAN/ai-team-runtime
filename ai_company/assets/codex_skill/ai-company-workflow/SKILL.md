@@ -38,13 +38,16 @@ Use this skill when the active workspace contains the AI_Team runtime or the ins
 
 - `scripts/company-run.sh`: skill-bundled runtime-driver helper; by default it calls `ai-team run-requirement` with the `codex-exec` executor and stops at human gates.
 - project runtime helpers: optional workspace-local setup and runtime-driver helpers when the current workspace is the AI_Team runtime repository.
-- runtime CLI: exposes `ai-team` as the user-facing entrypoint for runtime-driver execution, session bootstrap, state lookup, stage contract generation, stage result submission, verification, and feedback recording.
+- runtime CLI: exposes `ai-team dev` for human terminal workflows, plus `ai-team run-requirement` for runtime-driver execution, session bootstrap, state lookup, stage contract generation, stage result submission, verification, and feedback recording.
 - stage-run trace: `<session_id>/stage_runs/<run_id>_trace.json` records non-skippable `contract -> context -> acquire -> execute -> submit -> verify -> advance` steps.
-- layered memory: `.ai-team/memory/<Role>/raw`, `extracted`, and `graph` preserve original records, extracted rules, and relation edges.
 - generated local agents: optional Product, Dev, QA, and Acceptance agents for project-scoped execution.
 - generated local run skill: optional `ai-team-run` entrypoint for project-root workflow runs.
 
 Read available helper assets before choosing the bootstrap path. Prefer `run-requirement` so the runtime acquires, executes, submits, verifies, and advances stages instead of relying on conversational follow-through. A passed stage must have a complete runtime trace.
+
+## Terminal Usage
+
+For human-operated terminal workflows, prefer `ai-team dev`. It prompts for the requirement, confirms acceptance criteria, asks for technical plan confirmation, then can delegate Product / Dev / QA / Acceptance execution through `codex exec` while preserving runtime gates.
 
 ## Artifact Contract
 

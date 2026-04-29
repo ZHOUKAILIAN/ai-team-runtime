@@ -48,6 +48,7 @@ class StateStore:
         contract: AcceptanceContract | None = None,
         *,
         runtime_mode: str = "session_bootstrap",
+        initiator: str = "agent",
     ) -> SessionRecord:
         self.ensure_layout()
         session_id = self._next_session_id(request)
@@ -65,6 +66,7 @@ class StateStore:
             session_dir=session_dir,
             artifact_dir=artifact_dir,
             raw_message=raw_message,
+            initiator=initiator,
         )
         self._write_json(session_dir / "session.json", session.to_dict())
         request_path = artifact_dir / "request.md"
@@ -183,6 +185,7 @@ class StateStore:
             session_dir=Path(payload["session_dir"]),
             artifact_dir=Path(payload["artifact_dir"]),
             raw_message=payload.get("raw_message"),
+            initiator=payload.get("initiator", "agent"),
         )
 
     def load_workflow_summary(self, session_id: str) -> WorkflowSummary:

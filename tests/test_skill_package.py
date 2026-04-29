@@ -1,5 +1,6 @@
 import os
 import subprocess
+import tomllib
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -204,12 +205,28 @@ class SkillPackageTests(unittest.TestCase):
             self.assertFalse((project_root / ".codex" / "config.toml").exists())
             self.assertFalse((project_root / ".agents" / "skills" / "ai-team-init" / "SKILL.md").exists())
             dev_agent_lines = (project_root / ".codex" / "agents" / "ai_team_dev.toml").read_text().splitlines()
+            agent_names = {
+                path.stem: tomllib.loads(path.read_text()).get("name")
+                for path in (project_root / ".codex" / "agents").glob("ai_team_*.toml")
+            }
             all_agent_text = "\n".join(
                 path.read_text()
                 for path in (project_root / ".codex" / "agents").glob("ai_team_*.toml")
             )
+            self.assertEqual(
+                agent_names,
+                {
+                    "ai_team_product": "ai_team_product",
+                    "ai_team_dev": "ai_team_dev",
+                    "ai_team_qa": "ai_team_qa",
+                    "ai_team_acceptance": "ai_team_acceptance",
+                },
+            )
             self.assertIn('developer_instructions = """', dev_agent_lines)
             self.assertNotIn('instructions = """', dev_agent_lines)
+            run_skill = (project_root / ".agents" / "skills" / "ai-team-run" / "SKILL.md").read_text()
+            self.assertIn("ai-team dev", run_skill)
+            self.assertIn("terminal workflows", run_skill)
             self.assertIn("packaged Dev role context", all_agent_text)
             self.assertIn("runtime stage contract", all_agent_text)
             self.assertNotIn("Read and follow `Product/context.md`", all_agent_text)

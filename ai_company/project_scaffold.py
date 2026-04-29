@@ -24,7 +24,8 @@ def _project_files() -> dict[Path, str]:
 
 
 def _product_agent() -> str:
-    return '''description = "Drafts the Product PRD for the active AI_Team session and stops for CEO approval."
+    return '''name = "ai_team_product"
+description = "Drafts the Product PRD for the active AI_Team session and stops for CEO approval."
 model = "gpt-5.4"
 model_reasoning_effort = "high"
 sandbox_mode = "workspace-write"
@@ -52,7 +53,8 @@ Rules:
 
 
 def _dev_agent() -> str:
-    return '''description = "Implements the approved PRD for the active AI_Team session and writes the Dev handoff."
+    return '''name = "ai_team_dev"
+description = "Implements the approved PRD for the active AI_Team session and writes the Dev handoff."
 model = "gpt-5.4"
 model_reasoning_effort = "high"
 sandbox_mode = "workspace-write"
@@ -81,7 +83,8 @@ Rules:
 
 
 def _qa_agent() -> str:
-    return '''description = "Independently reruns critical verification for the active AI_Team session and returns evidence-backed QA findings."
+    return '''name = "ai_team_qa"
+description = "Independently reruns critical verification for the active AI_Team session and returns evidence-backed QA findings."
 model = "gpt-5.4"
 model_reasoning_effort = "high"
 sandbox_mode = "workspace-write"
@@ -109,7 +112,8 @@ Rules:
 
 
 def _acceptance_agent() -> str:
-    return '''description = "Produces the final AI acceptance recommendation for the active AI_Team session and waits for the human Go/No-Go decision."
+    return '''name = "ai_team_acceptance"
+description = "Produces the final AI acceptance recommendation for the active AI_Team session and waits for the human Go/No-Go decision."
 model = "gpt-5.4"
 model_reasoning_effort = "high"
 sandbox_mode = "workspace-write"
@@ -161,7 +165,7 @@ Best practice: invoke this skill only when Codex is opened at the target project
 - `scripts/company-init.sh`: local setup helper that generates `.codex/agents/` and `.agents/skills/ai-team-run/`; generated files stay out of git.
 - `scripts/company-run.sh`: local runtime-driver helper that calls `ai-team run-requirement` and prints `session_id`, `artifact_dir`, and `summary_path`.
 - `.codex/agents/`: local Product, Dev, QA, and Acceptance agents for this repository.
-- `ai-team`: runtime CLI backed by `ai_company/cli.py`, exposing the `ai-team run-requirement` driver entrypoint and lower-level state commands.
+- `ai-team`: runtime CLI backed by `ai_company/cli.py`, exposing `ai-team dev` for human terminal workflows and `ai-team start-session` for explicit bootstrap.
 - `.ai-team/<session_id>/`: the session-scoped runtime directory; `artifact_dir` points here and session metadata lives beside the artifacts.
 - `.ai-team/<session_id>/stage_runs/<run_id>_trace.json`: non-skippable runtime trace for `contract -> context -> acquire -> execute -> submit -> verify -> advance`.
 - `.ai-team/memory/<Role>/raw|extracted|graph`: layered memory for original findings, extracted reusable rules, and relation edges.
@@ -169,6 +173,16 @@ Best practice: invoke this skill only when Codex is opened at the target project
 - `ai-team panel` / `ai-team panel-snapshot`: read-only visibility tools for current action, blockers, evidence, and recent events.
 
 Read the available helper assets before choosing the bootstrap path.
+
+## Terminal Usage
+
+For human-operated terminal workflows, prefer:
+
+```bash
+ai-team dev
+```
+
+This confirms the requirement, confirms acceptance criteria, asks for a technical plan confirmation, and then preserves the runtime gates while delegating execution through `codex exec`.
 
 ## Workflow Contract
 
