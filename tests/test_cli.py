@@ -1264,6 +1264,8 @@ class CliTests(unittest.TestCase):
                     "start-session",
                     "--message",
                     "执行这个需求：做一个 harness-first workflow",
+                    "--initiator",
+                    "human",
                 ],
                 capture_output=True,
                 text=True,
@@ -1403,6 +1405,81 @@ class CliTests(unittest.TestCase):
             context_payload = json.loads(context_path.read_text())
             self.assertEqual(context_payload["stage"], "Dev")
             self.assertIn("Verify the harness.", context_payload["approved_prd_summary"])
+
+    def test_record_human_decision_rejects_agent_initiated_session(self) -> None:
+        from ai_company.models import WorkflowSummary
+        from ai_company.state import StateStore
+
+        repo_root = Path(__file__).resolve().parents[1]
+
+        with TemporaryDirectory(dir=local_temp_dir()) as temp_dir:
+            store = StateStore(Path(temp_dir))
+            session = store.create_session("做一个等待人工确认的流程", initiator="agent")
+            store.save_workflow_summary(
+                session,
+                WorkflowSummary(
+                    session_id=session.session_id,
+                    runtime_mode="session_bootstrap",
+                    current_state="WaitForCEOApproval",
+                    current_stage="ProductDraft",
+                    prd_status="drafted",
+                    human_decision="pending",
+                    artifact_paths={"workflow_summary": str(session.artifact_dir / "workflow_summary.md")},
+                ),
+            )
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "ai_company",
+                    "--repo-root",
+                    str(repo_root),
+                    "--state-root",
+                    temp_dir,
+                    "record-human-decision",
+                    "--session-id",
+                    session.session_id,
+                    "--decision",
+                    "go",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Human decisions are reserved for human-initiated sessions", result.stderr + result.stdout)
+
+    def test_start_session_persists_initiator(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+
+        with TemporaryDirectory(dir=local_temp_dir()) as temp_dir:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "ai_company",
+                    "--repo-root",
+                    str(repo_root),
+                    "--state-root",
+                    temp_dir,
+                    "start-session",
+                    "--message",
+                    "执行这个需求：做一个 human initiated workflow",
+                    "--initiator",
+                    "human",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0)
+            session_id = dict(
+                line.split(": ", 1) for line in result.stdout.splitlines() if ":" in line
+            )["session_id"]
+            payload = json.loads((Path(temp_dir) / session_id / "session.json").read_text())
+            self.assertEqual(payload["initiator"], "human")
 
     def test_record_feedback_persists_learning_and_feedback_metadata(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]

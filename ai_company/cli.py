@@ -99,6 +99,12 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     start_session_parser.add_argument("--message", required=True, help="Raw user message for session intake.")
+    start_session_parser.add_argument(
+        "--initiator",
+        choices=["human", "agent"],
+        default="agent",
+        help="Who initiated this workflow session.",
+    )
     start_session_parser.set_defaults(handler=_handle_start_session)
 
     current_stage_parser = subparsers.add_parser(
@@ -436,6 +442,7 @@ def _handle_start_session(args: argparse.Namespace) -> int:
         raw_message=args.message,
         contract=intake.contract,
         runtime_mode="session_bootstrap",
+        initiator=args.initiator,
     )
     summary_path = store.workflow_summary_path(session.session_id)
 
@@ -875,6 +882,11 @@ def _resolve_openai_oa_header(args: argparse.Namespace) -> str:
 def _handle_record_human_decision(args: argparse.Namespace) -> int:
     store = StateStore(args.state_root)
     session = store.load_session(args.session_id)
+    if session.initiator == "agent":
+        raise SystemExit(
+            "Human decisions are reserved for human-initiated sessions. "
+            "Agent sessions must wait for a human operator to intervene."
+        )
     summary = store.load_workflow_summary(args.session_id)
     updated_summary = StageMachine().apply_human_decision(
         summary=summary,
