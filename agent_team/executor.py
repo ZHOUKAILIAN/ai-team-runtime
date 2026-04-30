@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Protocol, runtime_checkable
 
+from .codex_isolation import isolated_codex_env
+
 
 RunCallable = Callable[..., subprocess.CompletedProcess[str]]
 
@@ -47,6 +49,10 @@ class CodexExecutor:
     sandbox: str = "workspace-write"
     approval: str = "never"
     profile: str = ""
+    isolate_home: bool = True
+    ignore_rules: bool = True
+    disable_plugins: bool = True
+    ephemeral: bool = True
     run: RunCallable = subprocess.run
 
     def build_command(self, *, prompt: str, output_path: Path) -> list[str]:
@@ -59,6 +65,12 @@ class CodexExecutor:
             "--output-last-message",
             str(output_path),
         ]
+        if self.ignore_rules:
+            command.append("--ignore-rules")
+        if self.disable_plugins:
+            command.extend(["--disable", "plugins"])
+        if self.ephemeral:
+            command.append("--ephemeral")
         if self.model:
             command.extend(["--model", self.model])
         if self.sandbox:
@@ -74,12 +86,25 @@ class CodexExecutor:
         _ensure_output_dir(output_dir)
         output_path = output_dir / f"{stage.lower()}_last_message.json"
         (output_dir / f"{stage.lower()}_prompt.md").write_text(prompt)
-        result = self.run(
-            self.build_command(prompt=prompt, output_path=output_path),
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        command = self.build_command(prompt=prompt, output_path=output_path)
+        if self.isolate_home:
+            with isolated_codex_env() as env:
+                result = self.run(
+                    command,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    env=env,
+                    stdin=subprocess.DEVNULL,
+                )
+        else:
+            result = self.run(
+                command,
+                capture_output=True,
+                text=True,
+                check=False,
+                stdin=subprocess.DEVNULL,
+            )
         last_message = output_path.read_text() if output_path.exists() else ""
         return ExecutorResult(
             returncode=result.returncode,

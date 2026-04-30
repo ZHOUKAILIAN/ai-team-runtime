@@ -390,7 +390,25 @@ class DevController:
 
     def _capture_repo_structure(self) -> str:
         paths: list[str] = []
-        excluded = {".git", ".agent-team", ".worktrees", "__pycache__", ".pytest_cache"}
+        excluded = {
+            ".agent-team",
+            ".git",
+            ".mypy_cache",
+            ".nox",
+            ".pytest_cache",
+            ".ruff_cache",
+            ".tox",
+            ".venv",
+            ".worktrees",
+            "__pycache__",
+            "__pypackages__",
+            "build",
+            "dist",
+            "env",
+            "node_modules",
+            "site-packages",
+            "venv",
+        }
         for path in sorted(self.config.repo_root.rglob("*")):
             if len(paths) >= 200:
                 break

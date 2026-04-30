@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from .codex_isolation import isolated_codex_env
+
 
 RunCallable = Callable[..., subprocess.CompletedProcess[str]]
 
@@ -18,6 +20,10 @@ class CodexExecConfig:
     sandbox: str = "workspace-write"
     approval: str = "never"
     profile: str = ""
+    isolate_home: bool = True
+    ignore_rules: bool = True
+    disable_plugins: bool = True
+    ephemeral: bool = True
 
     def build_command(self, prompt: str) -> list[str]:
         command = [
@@ -27,6 +33,12 @@ class CodexExecConfig:
             str(self.repo_root),
             "--json",
         ]
+        if self.ignore_rules:
+            command.append("--ignore-rules")
+        if self.disable_plugins:
+            command.extend(["--disable", "plugins"])
+        if self.ephemeral:
+            command.append("--ephemeral")
         if self.output_last_message is not None:
             command.extend(["--output-last-message", str(self.output_last_message)])
         if self.model:
@@ -59,7 +71,24 @@ class CodexExecRunner:
 
     def run(self, config: CodexExecConfig, prompt: str) -> CodexExecResult:
         command = config.build_command(prompt)
-        result = self._run(command, capture_output=True, text=True, check=False)
+        if config.isolate_home:
+            with isolated_codex_env() as env:
+                result = self._run(
+                    command,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    env=env,
+                    stdin=subprocess.DEVNULL,
+                )
+        else:
+            result = self._run(
+                command,
+                capture_output=True,
+                text=True,
+                check=False,
+                stdin=subprocess.DEVNULL,
+            )
         last_message = ""
         if config.output_last_message is not None and config.output_last_message.exists():
             last_message = config.output_last_message.read_text()

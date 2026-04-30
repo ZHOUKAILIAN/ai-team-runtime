@@ -24,6 +24,10 @@ class CodexExecTests(unittest.TestCase):
         self.assertIn("--json", command)
         self.assertIn("--output-last-message", command)
         self.assertIn("/tmp/last.txt", command)
+        self.assertIn("--ignore-rules", command)
+        self.assertIn("--disable", command)
+        self.assertIn("plugins", command)
+        self.assertIn("--ephemeral", command)
         self.assertIn("--model", command)
         self.assertIn("gpt-5.5", command)
         self.assertIn("--sandbox", command)
@@ -34,11 +38,24 @@ class CodexExecTests(unittest.TestCase):
         self.assertIn("default", command)
         self.assertEqual(command[-1], "Prompt")
 
+    def test_build_command_uses_prompt_protection_flags_by_default(self) -> None:
+        config = CodexExecConfig(repo_root=Path("/repo"))
+
+        command = config.build_command("Prompt")
+
+        self.assertIn("--ignore-rules", command)
+        self.assertIn("--disable", command)
+        self.assertIn("plugins", command)
+        self.assertNotIn("--ignore-user-config", command)
+
     def test_runner_captures_output_last_message(self) -> None:
         calls = []
 
-        def fake_run(command, *, capture_output, text, check):
+        def fake_run(command, *, capture_output, text, check, env=None, stdin=None):
             calls.append(command)
+            self.assertIsNotNone(env)
+            self.assertIn("CODEX_HOME", env)
+            self.assertIs(stdin, subprocess.DEVNULL)
             return subprocess.CompletedProcess(command, 0, stdout='{"event":"done"}\n', stderr="")
 
         with TemporaryDirectory() as temp_dir:

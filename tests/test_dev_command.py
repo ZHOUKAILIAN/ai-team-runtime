@@ -171,6 +171,33 @@ class DevCommandTests(unittest.TestCase):
 
         self.assertEqual(stage_harness.enabled_skills_by_stage["Dev"][0].name, "plan")
 
+    def test_capture_repo_structure_excludes_generated_and_dependency_dirs(self) -> None:
+        from agent_team.state import StateStore
+
+        with TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            (repo_root / "todo.py").write_text("")
+            (repo_root / ".venv" / "lib" / "python" / "site-packages").mkdir(parents=True)
+            (repo_root / ".venv" / "lib" / "python" / "site-packages" / "noise.py").write_text("")
+            (repo_root / "node_modules" / "pkg").mkdir(parents=True)
+            (repo_root / "node_modules" / "pkg" / "index.js").write_text("")
+            (repo_root / ".agent-team").mkdir()
+            (repo_root / ".agent-team" / "session.json").write_text("")
+            controller = DevController(
+                config=DevControllerConfig(repo_root=repo_root, state_store=StateStore(repo_root / "state")),
+                prompter=FakePrompter([]),
+                alignment_runner=FakeAlignmentRunner(),
+                tech_plan_runner=FakeTechPlanRunner(),
+                stage_harness=FakeStageHarness(StateStore(repo_root / "state")),
+            )
+
+            structure = controller._capture_repo_structure()
+
+        self.assertIn("todo.py", structure)
+        self.assertNotIn(".venv", structure)
+        self.assertNotIn("node_modules", structure)
+        self.assertNotIn(".agent-team", structure)
+
 
 if __name__ == "__main__":
     unittest.main()

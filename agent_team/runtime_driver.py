@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol
 
+from .codex_isolation import isolated_codex_env
 from .execution_context import StageExecutionContext, build_stage_execution_context
 from .gate_evaluator import GateEvaluator, NoopJudge
 from .gatekeeper import evaluate_candidate
@@ -53,6 +54,10 @@ class RuntimeDriverOptions:
     codex_sandbox: str = "workspace-write"
     codex_approval_policy: str = "never"
     codex_extra_args: list[str] = field(default_factory=list)
+    codex_isolate_home: bool = True
+    codex_ignore_rules: bool = True
+    codex_disable_plugins: bool = True
+    codex_ephemeral: bool = True
 
 
 @dataclass(slots=True)
@@ -283,19 +288,39 @@ class CodexExecStageExecutor:
             "-o",
             str(request.result_path),
         ]
+        if self.options.codex_ignore_rules:
+            command.append("--ignore-rules")
+        if self.options.codex_disable_plugins:
+            command.extend(["--disable", "plugins"])
+        if self.options.codex_ephemeral:
+            command.append("--ephemeral")
         if self.options.codex_model:
             command.extend(["--model", self.options.codex_model])
         command.extend(self.options.codex_extra_args)
         command.append(prompt)
         try:
-            completed = subprocess.run(
-                command,
-                cwd=request.repo_root,
-                capture_output=True,
-                text=True,
-                timeout=self.options.command_timeout_seconds,
-                check=False,
-            )
+            if self.options.codex_isolate_home:
+                with isolated_codex_env() as env:
+                    completed = subprocess.run(
+                        command,
+                        cwd=request.repo_root,
+                        capture_output=True,
+                        text=True,
+                        timeout=self.options.command_timeout_seconds,
+                        check=False,
+                        env=env,
+                        stdin=subprocess.DEVNULL,
+                    )
+            else:
+                completed = subprocess.run(
+                    command,
+                    cwd=request.repo_root,
+                    capture_output=True,
+                    text=True,
+                    timeout=self.options.command_timeout_seconds,
+                    check=False,
+                    stdin=subprocess.DEVNULL,
+                )
         except FileNotFoundError as exc:
             return _blocked_result_from_process(
                 request=request,
