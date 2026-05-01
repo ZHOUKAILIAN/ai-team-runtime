@@ -33,8 +33,8 @@ nickname_candidates = ["Piper", "Iris"]
 developer_instructions = """
 You are the Product role in the Agent Team workflow.
 
-Use the Agent Team runtime stage contract and Product role context as the source of truth.
-Prefer project-local `agent-team/project/roles/product.context.md` or existing repo role context; fall back to the packaged Product role context when no project-local context exists. Treat role files as context and contract, not as an independent workflow controller.
+Use the Agent Team runtime stage contract and packaged Product role context as the source of truth.
+If repo-local `Product/context.md` or `Product/SKILL.md` exists, treat it only as supplemental context.
 The workflow runner will provide `session_id`, `artifact_dir`, `workflow_summary_path`, and the raw request.
 
 Workflow Isolation Contract:
@@ -62,8 +62,8 @@ nickname_candidates = ["Bolt", "Mina"]
 developer_instructions = """
 You are the Dev role in the Agent Team workflow.
 
-Use the Agent Team runtime stage contract and Dev role context as the source of truth.
-Prefer project-local `agent-team/project/roles/dev.context.md` or existing repo role context; fall back to the packaged Dev role context when no project-local context exists. Treat role files as context and contract, not as an independent workflow controller.
+Use the Agent Team runtime stage contract and packaged Dev role context as the source of truth.
+If repo-local `Dev/context.md` or `Dev/SKILL.md` exists, treat it only as supplemental context.
 The workflow runner will provide `session_id`, `artifact_dir`, `workflow_summary_path`, and any QA findings that require rework.
 
 Workflow Isolation Contract:
@@ -92,8 +92,8 @@ nickname_candidates = ["Tess", "Rune"]
 developer_instructions = """
 You are the QA role in the Agent Team workflow.
 
-Use the Agent Team runtime stage contract and QA role context as the source of truth.
-Prefer project-local `agent-team/project/roles/qa.context.md` or existing repo role context; fall back to the packaged QA role context when no project-local context exists. Treat role files as context and contract, not as an independent workflow controller.
+Use the Agent Team runtime stage contract and packaged QA role context as the source of truth.
+If repo-local `QA/context.md` or `QA/SKILL.md` exists, treat it only as supplemental context.
 The workflow runner will provide `session_id`, `artifact_dir`, `workflow_summary_path`, and the latest `prd.md` plus `implementation.md`.
 
 Workflow Isolation Contract:
@@ -121,8 +121,8 @@ nickname_candidates = ["Vale", "Nora"]
 developer_instructions = """
 You are the Acceptance role in the Agent Team workflow.
 
-Use the Agent Team runtime stage contract and Acceptance role context as the source of truth.
-Prefer project-local `agent-team/project/roles/acceptance.context.md` or existing repo role context; fall back to the packaged Acceptance role context when no project-local context exists. Treat role files as context and contract, not as an independent workflow controller.
+Use the Agent Team runtime stage contract and packaged Acceptance role context as the source of truth.
+If repo-local `Acceptance/context.md` or `Acceptance/SKILL.md` exists, treat it only as supplemental context.
 The workflow runner will provide `session_id`, `artifact_dir`, `workflow_summary_path`, and the latest `prd.md`, `implementation.md`, and `qa_report.md`.
 
 Workflow Isolation Contract:
@@ -162,24 +162,39 @@ Best practice: invoke this skill only when Codex is opened at the target project
 
 ## Compatibility
 
-- This skill is opt-in for work that needs the Agent Team session/state-machine layer.
-- Ordinary AI Q&A style development stays valid for one-off edits and investigations that do not need Product, QA, Acceptance, or human Go/No-Go gates.
+- Agent Team is opt-in. Use it when the work should be routed through the Product -> Dev -> QA -> Acceptance handoff.
+- Ordinary AI Q&A style development stays valid for one-off edits, investigations, and ad hoc work that do not need the session/state-machine layer.
 - If a change is already running inside an Agent Team session, write progress and evidence back to the session artifacts instead of treating ad hoc chat notes as the source of truth.
 
 ## Available assets
 
 - `scripts/agent-team-init.sh`: local setup helper that generates `.codex/agents/` and `.agents/skills/agent-team-run/`; generated files stay out of git.
-- `scripts/agent-team-run.sh`: local session bootstrap helper that prints `session_id`, `artifact_dir`, and `summary_path`.
+- `scripts/agent-team-run.sh`: local runtime-driver helper that calls `agent-team run-requirement` and prints `session_id`, `artifact_dir`, and `summary_path`.
 - `.codex/agents/`: local Product, Dev, QA, and Acceptance agents for this repository.
-- `agent-team`: runtime CLI backed by `agent_team/cli.py`, exposing the `agent-team start-session` bootstrap entrypoint.
+- `agent-team`: runtime CLI backed by `agent_team/cli.py`, exposing `agent-team dev` for human terminal workflows and `agent-team start-session` for explicit bootstrap.
 - `.agent-team/<session_id>/`: the session-scoped runtime directory; `artifact_dir` points here and session metadata lives beside the artifacts.
+- `.agent-team/<session_id>/stage_runs/<run_id>_trace.json`: non-skippable runtime trace for `contract -> context -> acquire -> execute -> submit -> verify -> advance`.
+- `.agent-team/memory/<Role>/raw|extracted|graph`: layered memory for original findings, extracted reusable rules, and relation edges.
 - `agent-team status`: user-friendly project / role / status summary.
 - `agent-team panel` / `agent-team panel-snapshot`: read-only visibility tools for current action, blockers, evidence, and recent events.
 
 Read the available helper assets before choosing the bootstrap path.
 
+## Terminal Usage
+
+For human-operated terminal workflows, prefer:
+
+```bash
+agent-team dev
+```
+
+This confirms the requirement, confirms acceptance criteria, asks for a technical plan confirmation, and then preserves the runtime gates while delegating execution through `codex exec`.
+
 ## Workflow Contract
 
+- Prefer `agent-team run-requirement` so the runtime acquires, executes, submits, verifies, and advances stages.
+- A passed runtime-driven stage must have a complete trace; missing trace steps are blocking, not advisory.
+- Memory retrieval is keyword-first with CLI search over raw/extracted/graph layers; use graph/AI reasoning only for weak implicit relationships.
 - Read the generated `status.md`, `workflow_summary.md`, and the active session directory.
 - If subagents are available, prefer the local agents from `.codex/agents/` for Product, Dev, QA, and Acceptance.
 - Product writes `prd.md` with explicit acceptance criteria, then the workflow stops for CEO approval.

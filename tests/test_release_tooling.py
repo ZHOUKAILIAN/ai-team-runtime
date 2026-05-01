@@ -120,7 +120,7 @@ class ReleaseToolingTests(unittest.TestCase):
                 sys.executable,
                 "scripts/release/render_install_script.py",
                 "--repo",
-                "ZHOUKAILIAN/Agent Team",
+                "ZHOUKAILIAN/agent-team-runtime",
                 "--tag",
                 "v0.1.0",
                 "--version",

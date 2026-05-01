@@ -9,13 +9,13 @@ Ship `Agent Team` as a mature CLI product distributed only through GitHub Releas
 The target installation experience is:
 
 ```bash
-curl -fsSL https://github.com/ZHOUKAILIAN/Agent Team/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/ZHOUKAILIAN/agent-team-runtime/releases/latest/download/install.sh | sh
 ```
 
 Users may also install a pinned version:
 
 ```bash
-curl -fsSL https://github.com/ZHOUKAILIAN/Agent Team/releases/download/v0.1.0/install.sh | sh
+curl -fsSL https://github.com/ZHOUKAILIAN/agent-team-runtime/releases/download/v0.1.0/install.sh | sh
 ```
 
 This design assumes the user machine already has `Python >= 3.13`.

@@ -7,15 +7,20 @@ from pathlib import Path
 
 from .backend import DeterministicBackend
 from .board import build_board_snapshot
+from .executor import ClaudeCodeExecutor, CodexExecutor, StageExecutor
 from .execution_context import build_stage_execution_context
 from .gatekeeper import evaluate_candidate
+from .codex_skill_installer import install_codex_skill
 from .harness_paths import default_state_root
 from .intake import parse_intake_message
+from .interactive import DevController, DevControllerConfig, ExecutorAlignmentRunner, ExecutorTechPlanRunner, InteractivePrompter
 from .models import Finding, GateResult, StageResultEnvelope, WorkflowSummary
 from .orchestrator import WorkflowOrchestrator
 from .panel import build_panel_snapshot
-from .project_structure import ensure_project_structure
 from .project_scaffold import scaffold_project_codex_files
+from .project_structure import ensure_project_structure
+from .skill_registry import STAGES, SOURCE_LABELS, SkillRegistry
+from .stage_harness import StageHarness
 from .stage_contracts import build_stage_contract
 from .stage_machine import StageMachine
 from .state import StageRunStateError, StateStore
@@ -40,7 +45,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="agent-team",
         description=(
-            "Agent Team single-session workflow CLI. Prefer start-session for the real skill-driven workflow; "
+            "Agent Team single-session workflow CLI. Prefer run-requirement for runtime-driven execution; "
             "run/agent-run are deterministic demo commands."
         ),
     )
@@ -61,6 +66,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     codex_init_parser.set_defaults(handler=_handle_codex_init)
 
+    install_skill_parser = subparsers.add_parser(
+        "install-codex-skill",
+        help="Install the packaged agent-team-workflow skill into CODEX_HOME.",
+    )
+    install_skill_parser.set_defaults(handler=_handle_install_codex_skill)
+
     project_init_parser = subparsers.add_parser(
         "init-project-structure",
         help="Create or refresh the project-level Agent Team doc structure and doc map.",
@@ -75,11 +86,11 @@ def build_parser() -> argparse.ArgumentParser:
         "run",
         help=(
             "Demo command: execute the deterministic workflow session from an explicit request "
-            "(real workflow entrypoint: start-session)."
+            "(real workflow entrypoint: run-requirement)."
         ),
         description=(
             "Demo command: execute the deterministic workflow session from an explicit request. "
-            "For the real skill-driven workflow, use start-session."
+            "For the real runtime-driven workflow, use run-requirement."
         ),
     )
     run_parser.add_argument("--request", required=True, help="Raw feature or process request.")
@@ -102,7 +113,163 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     start_session_parser.add_argument("--message", required=True, help="Raw user message for session intake.")
+    start_session_parser.add_argument(
+        "--initiator",
+        choices=["human", "agent"],
+        default="agent",
+        help="Who initiated this workflow session.",
+    )
     start_session_parser.set_defaults(handler=_handle_start_session)
+
+    run_requirement_parser = subparsers.add_parser(
+        "run-requirement",
+        help="Drive an Agent Team requirement through runtime-controlled stage execution.",
+        description=(
+            "Create or resume an Agent Team session and let the runtime acquire, execute, submit, "
+            "verify, and advance each executable stage. Human gates are preserved unless explicit "
+            "auto-decision flags are provided."
+        ),
+    )
+    run_requirement_target = run_requirement_parser.add_mutually_exclusive_group(required=True)
+    run_requirement_target.add_argument("--message", help="Raw user message for a new requirement session.")
+    run_requirement_target.add_argument("--session-id", help="Existing session ID to continue driving.")
+    run_requirement_parser.add_argument(
+        "--executor",
+        choices=["codex-exec", "command", "dry-run"],
+        default="codex-exec",
+        help="Stage executor backend. codex-exec runs Codex CLI; command runs --executor-command.",
+    )
+    run_requirement_parser.add_argument(
+        "--executor-command",
+        help=(
+            "Shell command for --executor command. The command receives AGENT_TEAM_* environment variables "
+            "and must write a StageResultEnvelope JSON to AGENT_TEAM_RESULT_BUNDLE or stdout."
+        ),
+    )
+    run_requirement_parser.add_argument(
+        "--command-timeout-seconds",
+        type=int,
+        default=3600,
+        help="Timeout for codex-exec or command executor stage runs.",
+    )
+    run_requirement_parser.add_argument(
+        "--auto-approve-product",
+        action="store_true",
+        help="Automatically record Product approval and continue into Dev.",
+    )
+    run_requirement_parser.add_argument(
+        "--auto-final-decision",
+        choices=["go", "no-go"],
+        default="",
+        help="Automatically record the final human decision after Acceptance.",
+    )
+    run_requirement_parser.add_argument(
+        "--max-stage-runs",
+        type=int,
+        default=12,
+        help="Maximum executable stage attempts before the driver blocks to avoid loops.",
+    )
+    run_requirement_parser.add_argument(
+        "--judge",
+        choices=["off", "noop", "openai-sandbox"],
+        default="off",
+        help="Optional independent judge after hard gates pass.",
+    )
+    run_requirement_parser.add_argument("--model", default="gpt-5.4", help="Model for --judge openai-sandbox.")
+    run_requirement_parser.add_argument("--docker-image", default="python:3.13-slim")
+    run_requirement_parser.add_argument("--openai-api-key")
+    run_requirement_parser.add_argument("--openai-base-url")
+    run_requirement_parser.add_argument("--openai-proxy-url")
+    run_requirement_parser.add_argument("--openai-user-agent", default="Agent-Team-Runtime/0.1")
+    run_requirement_parser.add_argument("--openai-oa")
+    run_requirement_parser.add_argument("--codex-model", default="", help="Optional model for codex-exec.")
+    run_requirement_parser.add_argument(
+        "--codex-sandbox",
+        choices=["read-only", "workspace-write", "danger-full-access"],
+        default="workspace-write",
+        help="Sandbox mode passed to codex exec.",
+    )
+    run_requirement_parser.add_argument(
+        "--codex-approval-policy",
+        choices=["untrusted", "on-request", "never"],
+        default="never",
+        help="Approval policy passed to codex exec.",
+    )
+    run_requirement_parser.add_argument(
+        "--codex-extra-arg",
+        action="append",
+        default=[],
+        help="Extra argument passed through to codex exec. Repeat for multiple arguments.",
+    )
+    run_requirement_parser.set_defaults(handler=_handle_run_requirement)
+
+    dev_parser = subparsers.add_parser(
+        "dev",
+        help=(
+            "Interactive development workflow: clarify requirements, discuss technical approach, "
+            "then execute via AI agents."
+        ),
+    )
+    dev_parser.add_argument("--message", help="Initial requirement. Prompt if omitted.")
+    dev_parser.add_argument("--session-id", help="Existing session to resume.")
+    dev_parser.add_argument(
+        "--executor",
+        choices=["codex", "claude-code"],
+        default="codex",
+        help="AI executor for all interactive and stage prompts.",
+    )
+    dev_parser.add_argument("--product-executor", choices=["codex", "claude-code"], help="Executor for Product stage.")
+    dev_parser.add_argument("--dev-executor", choices=["codex", "claude-code"], help="Executor for Dev stage.")
+    dev_parser.add_argument("--qa-executor", choices=["codex", "claude-code"], help="Executor for QA stage.")
+    dev_parser.add_argument(
+        "--acceptance-executor",
+        choices=["codex", "claude-code"],
+        help="Executor for Acceptance stage.",
+    )
+    dev_parser.add_argument("--codex-bin", default="codex", help="Path to codex executable.")
+    dev_parser.add_argument("--claude-bin", default="claude", help="Path to Claude Code executable.")
+    dev_parser.add_argument("--model", default="", help="Optional model override.")
+    dev_parser.add_argument("--sandbox", default="workspace-write", help="Codex sandbox mode.")
+    dev_parser.add_argument("--approval", default="never", help="Codex approval policy.")
+    dev_parser.add_argument("--profile", default="", help="Optional Codex config profile.")
+    dev_parser.add_argument(
+        "--with-skills",
+        action="append",
+        default=[],
+        help="Enable skills for this run, e.g. dev:plan,refactor-checklist or qa:security-audit.",
+    )
+    dev_parser.add_argument(
+        "--skip-skills",
+        action="append",
+        default=[],
+        help="Skip skills for this run, e.g. qa:security-audit.",
+    )
+    dev_parser.add_argument("--skills-empty", action="store_true", help="Run without skills for this invocation.")
+    dev_parser.add_argument("--dry-run", action="store_true", help="Print plan without executing.")
+    dev_parser.set_defaults(handler=_handle_dev)
+
+    skill_parser = subparsers.add_parser("skill", help="Inspect and manage Agent Team stage skills.")
+    skill_subparsers = skill_parser.add_subparsers(dest="skill_command", required=True)
+
+    skill_list_parser = skill_subparsers.add_parser("list", help="List available skills.")
+    skill_list_parser.add_argument("--stage", choices=list(STAGES), help="Filter by stage.")
+    skill_list_parser.add_argument("--source", choices=["builtin", "personal", "project"], help="Filter by source.")
+    skill_list_parser.set_defaults(handler=_handle_skill_list)
+
+    skill_show_parser = skill_subparsers.add_parser("show", help="Show a skill.")
+    skill_show_parser.add_argument("name", help="Skill name.")
+    skill_show_parser.add_argument("--stage", choices=list(STAGES), help="Resolve skill for a stage.")
+    skill_show_parser.set_defaults(handler=_handle_skill_show)
+
+    skill_preferences_parser = skill_subparsers.add_parser("preferences", help="Show or reset skill preferences.")
+    skill_preferences_parser.add_argument("--reset", action="store_true", help="Clear skill preferences.")
+    skill_preferences_parser.set_defaults(handler=_handle_skill_preferences)
+
+    skill_default_parser = skill_subparsers.add_parser("default", help="Set or reset a stage default skill list.")
+    skill_default_parser.add_argument("stage", choices=list(STAGES), help="Stage name.")
+    skill_default_parser.add_argument("skills", nargs="*", help="Default skill names.")
+    skill_default_parser.add_argument("--reset", action="store_true", help="Clear default skills for the stage.")
+    skill_default_parser.set_defaults(handler=_handle_skill_default)
 
     current_stage_parser = subparsers.add_parser(
         "current-stage",
@@ -190,8 +357,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     verify_result_parser.add_argument(
         "--openai-user-agent",
-        default="Agent Team-Runtime/0.1",
-        help="User-Agent for OpenAI-compatible requests. Defaults to Agent Team-Runtime/0.1.",
+        default="Agent-Team-Runtime/0.1",
+        help="User-Agent for OpenAI-compatible requests. Defaults to Agent-Team-Runtime/0.1.",
     )
     verify_result_parser.add_argument(
         "--openai-oa",
@@ -236,8 +403,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     judge_result_parser.add_argument(
         "--openai-user-agent",
-        default="Agent Team-Runtime/0.1",
-        help="User-Agent for OpenAI-compatible requests. Defaults to Agent Team-Runtime/0.1.",
+        default="Agent-Team-Runtime/0.1",
+        help="User-Agent for OpenAI-compatible requests. Defaults to Agent-Team-Runtime/0.1.",
     )
     judge_result_parser.add_argument(
         "--openai-oa",
@@ -268,11 +435,11 @@ def build_parser() -> argparse.ArgumentParser:
         "agent-run",
         help=(
             "Demo command: execute the deterministic workflow session from a raw user message "
-            "(real workflow entrypoint: start-session)."
+            "(real workflow entrypoint: run-requirement)."
         ),
         description=(
             "Demo command: execute the deterministic workflow session from a raw user message. "
-            "For the real skill-driven workflow, use start-session."
+            "For the real runtime-driven workflow, use run-requirement."
         ),
     )
     agent_run_parser.add_argument("--message", required=True, help="Raw user message for the agent to process.")
@@ -395,6 +562,14 @@ def _handle_codex_init(args: argparse.Namespace) -> int:
     return 0
 
 
+def _handle_install_codex_skill(args: argparse.Namespace) -> int:
+    del args
+    target = install_codex_skill()
+    print(f"installed_skill: {target / 'SKILL.md'}")
+    print(f"installed_helper: {target / 'scripts' / 'agent-team-run.sh'}")
+    return 0
+
+
 def _handle_init_project_structure(args: argparse.Namespace) -> int:
     structure = ensure_project_structure(args.repo_root)
     print(f"repo_root: {structure.repo_root}")
@@ -403,7 +578,6 @@ def _handle_init_project_structure(args: argparse.Namespace) -> int:
     print(f"used_default_docs: {structure.used_default_docs}")
     print(f"doc_map: {json.dumps(structure.doc_map, ensure_ascii=False, sort_keys=True)}")
     return 0
-
 
 
 def _handle_run(args: argparse.Namespace) -> int:
@@ -442,12 +616,205 @@ def _handle_start_session(args: argparse.Namespace) -> int:
         raw_message=args.message,
         contract=intake.contract,
         runtime_mode="session_bootstrap",
+        initiator=args.initiator,
     )
     summary_path = store.workflow_summary_path(session.session_id)
 
     print(f"session_id: {session.session_id}")
     print(f"artifact_dir: {session.artifact_dir}")
     print(f"summary_path: {summary_path}")
+    return 0
+
+
+def _handle_run_requirement(args: argparse.Namespace) -> int:
+    from .runtime_driver import RuntimeDriverError, RuntimeDriverOptions, run_requirement
+
+    try:
+        result = run_requirement(
+            repo_root=args.repo_root,
+            state_root=args.state_root,
+            message=args.message or "",
+            session_id=args.session_id or "",
+            options=RuntimeDriverOptions(
+                executor=args.executor,
+                executor_command=args.executor_command or "",
+                command_timeout_seconds=args.command_timeout_seconds,
+                auto_approve_product=args.auto_approve_product,
+                auto_final_decision=args.auto_final_decision,
+                max_stage_runs=args.max_stage_runs,
+                judge=args.judge,
+                model=args.model,
+                docker_image=args.docker_image,
+                openai_api_key=args.openai_api_key,
+                openai_base_url=args.openai_base_url,
+                openai_proxy_url=args.openai_proxy_url,
+                openai_user_agent=args.openai_user_agent,
+                openai_oa=args.openai_oa,
+                codex_model=args.codex_model,
+                codex_sandbox=args.codex_sandbox,
+                codex_approval_policy=args.codex_approval_policy,
+                codex_extra_args=list(args.codex_extra_arg),
+            ),
+        )
+    except RuntimeDriverError as exc:
+        raise SystemExit(str(exc))
+
+    print(f"session_id: {result.session_id}")
+    print(f"artifact_dir: {result.artifact_dir}")
+    print(f"summary_path: {result.summary_path}")
+    print(f"runtime_driver_status: {result.status}")
+    print(f"current_state: {result.current_state}")
+    print(f"current_stage: {result.current_stage}")
+    print(f"acceptance_status: {result.acceptance_status}")
+    print(f"human_decision: {result.human_decision}")
+    print(f"stage_run_count: {result.stage_run_count}")
+    if result.gate_status:
+        print(f"gate_status: {result.gate_status}")
+    if result.gate_reason:
+        print(f"gate_reason: {result.gate_reason}")
+    if result.next_action:
+        print(f"next_action: {result.next_action}")
+    return 1 if result.status in {"blocked", "failed"} else 0
+
+
+def _handle_dev(args: argparse.Namespace) -> int:
+    if args.dry_run:
+        print("agent-team dev dry run")
+        print(f"repo_root: {args.repo_root}")
+        print(f"executor: {args.executor}")
+        print(f"codex_bin: {args.codex_bin}")
+        print(f"claude_bin: {args.claude_bin}")
+        return 0
+
+    store = StateStore(args.state_root)
+    default_executor = _build_executor(args, args.executor)
+    alignment_runner = ExecutorAlignmentRunner(repo_root=args.repo_root, executor=default_executor)
+    tech_plan_runner = ExecutorTechPlanRunner(repo_root=args.repo_root, executor=default_executor)
+    skill_registry = SkillRegistry(args.repo_root)
+    stage_harness = StageHarness(
+        repo_root=args.repo_root,
+        state_store=store,
+        executor=default_executor,
+        stage_executors=_stage_executor_overrides(args),
+    )
+    controller = DevController(
+        config=DevControllerConfig(
+            repo_root=args.repo_root,
+            state_store=store,
+            message=args.message or "",
+            session_id=args.session_id or "",
+        ),
+        prompter=InteractivePrompter(),
+        alignment_runner=alignment_runner,
+        tech_plan_runner=tech_plan_runner,
+        stage_harness=stage_harness,
+        skill_registry=skill_registry,
+        skill_overrides=_resolve_skill_overrides(args, skill_registry),
+        skills_empty=args.skills_empty,
+    )
+    session_id = controller.run()
+    print(f"session_id: {session_id}")
+    print(f"panel: agent-team panel --session-id {session_id}")
+    return 0
+
+
+def _build_executor(args: argparse.Namespace, executor_name: str) -> StageExecutor:
+    if executor_name == "claude-code":
+        return ClaudeCodeExecutor(
+            claude_bin=args.claude_bin,
+            model=args.model,
+        )
+    return CodexExecutor(
+        repo_root=args.repo_root,
+        codex_bin=args.codex_bin,
+        model=args.model,
+        sandbox=args.sandbox,
+        approval=args.approval,
+        profile=args.profile,
+    )
+
+
+def _stage_executor_overrides(args: argparse.Namespace) -> dict[str, StageExecutor]:
+    overrides: dict[str, StageExecutor] = {}
+    for stage in ("Product", "Dev", "QA", "Acceptance"):
+        value = getattr(args, f"{stage.lower()}_executor", None)
+        if value:
+            overrides[stage] = _build_executor(args, value)
+    return overrides
+
+
+def _resolve_skill_overrides(args: argparse.Namespace, registry: SkillRegistry) -> dict[str, list[str]]:
+    if args.skills_empty:
+        return {}
+    if not args.with_skills and not args.skip_skills:
+        return {}
+
+    selected = {stage: registry.load_preferences().selected_for(stage) for stage in STAGES}
+    for stage, names in _parse_stage_skill_specs(args.with_skills).items():
+        selected[stage] = names
+    for stage, names in _parse_stage_skill_specs(args.skip_skills).items():
+        selected[stage] = [name for name in selected.get(stage, []) if name not in set(names)]
+    return selected
+
+
+def _parse_stage_skill_specs(specs: list[str]) -> dict[str, list[str]]:
+    parsed: dict[str, list[str]] = {}
+    for spec in specs:
+        if ":" not in spec:
+            raise SystemExit(f"Skill spec must be stage:name[,name]: {spec}")
+        stage_raw, names_raw = spec.split(":", 1)
+        stage = _normalize_stage_name(stage_raw)
+        names = [name.strip() for name in names_raw.split(",") if name.strip()]
+        parsed.setdefault(stage, []).extend(names)
+    return parsed
+
+
+def _normalize_stage_name(stage: str) -> str:
+    for known in STAGES:
+        if known.lower() == stage.lower():
+            return known
+    raise SystemExit(f"Unknown skill stage: {stage}")
+
+
+def _handle_skill_list(args: argparse.Namespace) -> int:
+    registry = SkillRegistry(args.repo_root)
+    for skill in registry.list_skills(stage=args.stage, source=args.source):
+        stages = ",".join(skill.stages)
+        print(f"{skill.name}\t{SOURCE_LABELS[skill.source]}\t{stages}\t{skill.description}")
+    return 0
+
+
+def _handle_skill_show(args: argparse.Namespace) -> int:
+    registry = SkillRegistry(args.repo_root)
+    skill = registry.get_skill(args.name, stage=args.stage)
+    if skill is None:
+        raise SystemExit(f"Skill not found: {args.name}")
+    print(f"name: {skill.name}")
+    print(f"source: {SOURCE_LABELS[skill.source]}")
+    print(f"stages: {', '.join(skill.stages)}")
+    print(f"path: {skill.path}")
+    print("")
+    print(skill.content)
+    return 0
+
+
+def _handle_skill_preferences(args: argparse.Namespace) -> int:
+    registry = SkillRegistry(args.repo_root)
+    if args.reset:
+        registry.reset_preferences()
+    assert registry.preference_path is not None
+    print(registry.preference_path.read_text() if registry.preference_path.exists() else "")
+    return 0
+
+
+def _handle_skill_default(args: argparse.Namespace) -> int:
+    registry = SkillRegistry(args.repo_root)
+    if args.reset:
+        registry.clear_default(args.stage)
+    else:
+        registry.set_default(args.stage, args.skills)
+    assert registry.preference_path is not None
+    print(registry.preference_path.read_text())
     return 0
 
 
@@ -881,6 +1248,11 @@ def _resolve_openai_oa_header(args: argparse.Namespace) -> str:
 def _handle_record_human_decision(args: argparse.Namespace) -> int:
     store = StateStore(args.state_root)
     session = store.load_session(args.session_id)
+    if session.initiator == "agent":
+        raise SystemExit(
+            "Human decisions are reserved for human-initiated sessions. "
+            "Agent sessions must wait for a human operator to intervene."
+        )
     summary = store.load_workflow_summary(args.session_id)
     updated_summary = StageMachine().apply_human_decision(
         summary=summary,

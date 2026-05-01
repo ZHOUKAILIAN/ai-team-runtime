@@ -7,13 +7,13 @@
 正式安装方式：
 
 ```bash
-curl -fsSL https://github.com/ZHOUKAILIAN/Agent Team/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/ZHOUKAILIAN/agent-team-runtime/releases/latest/download/install.sh | sh
 ```
 
 固定版本安装：
 
 ```bash
-curl -fsSL https://github.com/ZHOUKAILIAN/Agent Team/releases/download/v0.1.0/install.sh | sh
+curl -fsSL https://github.com/ZHOUKAILIAN/agent-team-runtime/releases/download/v0.1.0/install.sh | sh
 ```
 
 安装前提：

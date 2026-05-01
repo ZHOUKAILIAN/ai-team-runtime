@@ -11,14 +11,8 @@ FIGMA_NODE_ID_PATTERN = re.compile(r"\b\d{2,}:\d+\b")
 
 TRIGGER_PATTERNS = (
     re.compile(r"^\s*执行这个需求[:：]\s*(?P<request>.+?)\s*$", re.IGNORECASE | re.DOTALL),
-    re.compile(
-        r"^\s*按\s*Agent\s*Team\s*流程跑这个需求[:：]\s*(?P<request>.+?)\s*$",
-        re.IGNORECASE | re.DOTALL,
-    ),
-    re.compile(
-        r"^\s*按\s*Agent\s*Team\s*流程执行[:：]\s*(?P<request>.+?)\s*$",
-        re.IGNORECASE | re.DOTALL,
-    ),
+    re.compile(r"^\s*按\s*Agent\s*Team\s*流程跑这个需求[:：]\s*(?P<request>.+?)\s*$", re.IGNORECASE | re.DOTALL),
+    re.compile(r"^\s*按\s*Agent\s*Team\s*流程执行[:：]\s*(?P<request>.+?)\s*$", re.IGNORECASE | re.DOTALL),
     re.compile(
         r"^\s*run\s+this\s+requirement\s+through\s+the\s+agent\s+team\s+workflow[:：]\s*(?P<request>.+?)\s*$",
         re.IGNORECASE | re.DOTALL,

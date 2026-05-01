@@ -17,6 +17,7 @@ from .models import (
     StageRunRecord,
     WorkflowSummary,
 )
+from .memory_layers import record_learning_layers
 from .status import render_status_markdown
 from .workflow_summary import render_workflow_summary
 
@@ -47,6 +48,7 @@ class StateStore:
         contract: AcceptanceContract | None = None,
         *,
         runtime_mode: str = "session_bootstrap",
+        initiator: str = "agent",
     ) -> SessionRecord:
         self.ensure_layout()
         session_id = self._next_session_id(request)
@@ -64,6 +66,7 @@ class StateStore:
             session_dir=session_dir,
             artifact_dir=artifact_dir,
             raw_message=raw_message,
+            initiator=initiator,
         )
         self._write_json(session_dir / "session.json", session.to_dict())
         request_path = artifact_dir / "request.md"
@@ -182,6 +185,7 @@ class StateStore:
             session_dir=Path(payload["session_dir"]),
             artifact_dir=Path(payload["artifact_dir"]),
             raw_message=payload.get("raw_message"),
+            initiator=payload.get("initiator", "agent"),
         )
 
     def load_workflow_summary(self, session_id: str) -> WorkflowSummary:
@@ -309,7 +313,7 @@ class StateStore:
         return run
 
     def submit_stage_run_result(self, run_id: str, result: StageResultEnvelope) -> StageRunRecord:
-        run = self.load_stage_run(run_id)
+        run = self._load_stage_run_for_session(result.session_id, run_id)
         if run.state != "RUNNING":
             raise StageRunStateError(f"Stage run {run.run_id} is {run.state}; expected RUNNING.")
         if run.session_id != result.session_id:
@@ -341,6 +345,13 @@ class StateStore:
         )
         self._save_stage_run(session, updated)
         return updated
+
+    def _load_stage_run_for_session(self, session_id: str, run_id: str) -> StageRunRecord:
+        session = self.load_session(session_id)
+        path = self._stage_runs_dir(session) / f"{run_id}.json"
+        if not path.exists():
+            raise FileNotFoundError(f"Stage run not found for session {session_id}: {run_id}")
+        return StageRunRecord.from_dict(json.loads(path.read_text()))
 
     def update_stage_run(
         self,
@@ -569,13 +580,15 @@ class StateStore:
 
         learning_dir = self.root / "memory" / finding.target_stage
         learning_dir.mkdir(parents=True, exist_ok=True)
+        recorded_at = self._timestamp()
+        record_learning_layers(learning_dir=learning_dir, finding=finding, recorded_at=recorded_at)
 
         if finding.lesson:
             self._append_unique_section(
                 learning_dir / "lessons.md",
                 "Learned Lessons",
                 (
-                    f"## {self._timestamp()}\n"
+                    f"## {recorded_at}\n"
                     f"- issue: {finding.issue}\n"
                     f"- source: {finding.source_stage}\n"
                     f"- severity: {finding.severity}\n"
@@ -589,7 +602,7 @@ class StateStore:
                 learning_dir / "context_patch.md",
                 "Context Patches",
                 (
-                    f"## {self._timestamp()}\n"
+                    f"## {recorded_at}\n"
                     f"Constraint: {finding.proposed_context_update}\n"
                     f"Completion signal: {_completion_signal_for_finding(finding)}\n"
                 ),
@@ -601,7 +614,7 @@ class StateStore:
                 learning_dir / "skill_patch.md",
                 "Skill Patches",
                 (
-                    f"## {self._timestamp()}\n"
+                    f"## {recorded_at}\n"
                     f"Goal: {finding.proposed_skill_update}\n"
                     f"Completion signal: {_completion_signal_for_finding(finding)}\n"
                 ),
@@ -610,7 +623,7 @@ class StateStore:
 
         findings_log = learning_dir / "findings.jsonl"
         with findings_log.open("a") as handle:
-            handle.write(json.dumps({"applied_at": self._timestamp(), **finding.to_dict()}) + "\n")
+            handle.write(json.dumps({"applied_at": recorded_at, **finding.to_dict()}) + "\n")
 
     def latest_session_id(self) -> str | None:
         if not self.root.exists():

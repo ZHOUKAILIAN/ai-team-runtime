@@ -38,21 +38,22 @@ Use this skill only for Agent Team workflow execution. Do not use it for one-off
 ## Compatibility
 
 - Agent Team is opt-in. Use it when the work should be routed through the Product -> Dev -> QA -> Acceptance handoff.
-- Normal AI Q&A style development stays valid for one-off edits, investigations, and ad hoc work that do not need the session/state-machine layer.
-- In repos that use both, Agent Team session artifacts and ordinary AI-assisted development notes may coexist, but they should not claim the same ownership over a single change.
+- Normal AI Q&A style development remains valid for one-off edits, investigations, and ad hoc work that do not need the session/state-machine layer.
+- If a change is already running inside an Agent Team session, write progress and evidence back to the session artifacts instead of treating ad hoc chat notes as the source of truth.
 
 ## Available assets
 
 - `./scripts/agent-team-init.sh`: project-scoped setup helper for local Codex agents and the local run skill.
-- `./scripts/agent-team-run.sh`: session bootstrap helper for this repository.
+- `./scripts/agent-team-run.sh`: runtime-driver helper for this repository; by default it calls `agent-team run-requirement` with the `codex-exec` executor.
 - `.codex/agents/*.toml`: generated local agents for Product, Dev, QA, and Acceptance.
 - `.agents/skills/agent-team-run/SKILL.md`: generated local run skill for project-root execution.
-- `agent-team`: user-facing CLI entrypoint backed by `agent_team/cli.py`; the CLI owns session bootstrap, state lookup, stage contract generation, stage result submission, and feedback recording.
+- `agent-team`: user-facing CLI entrypoint backed by `agent_team/cli.py`; the CLI owns runtime-driver execution, session bootstrap, state lookup, stage contract generation, stage result submission, verification, and feedback recording.
 - `.agent-team/<session_id>/`: session-scoped handoff artifacts, journals, findings, stage metadata, events, and `review.md`.
-- `.agent-team/memory/`: learned role memory overlays from feedback and findings.
+- `.agent-team/<session_id>/stage_runs/<run_id>_trace.json`: non-skippable runtime trace for `contract -> context -> acquire -> execute -> submit -> verify -> advance`.
+- `.agent-team/memory/`: learned role memory with three layers: `raw/` original findings, `extracted/` lessons/context/skill patches, and `graph/` relation edges.
 - `docs/workflow-specs/2026-04-11-agent-team-codex-cli-help.md`: Codex-oriented runtime operation help for the CLI harness loop.
 
-The helper scripts bootstrap metadata only. deterministic runtime output is workflow metadata only, not real QA/Acceptance evidence.
+The helper scripts must prefer `run-requirement` over conversational follow-through. deterministic runtime output is workflow metadata only, not real QA/Acceptance evidence. Runtime completion requires the stage-run trace to include every required step in order.
 
 ## Artifact Contract
 
@@ -87,6 +88,7 @@ Every active session maintains these artifacts under the provided session artifa
 - The native-node policy excludes host-owned nodes such as `wechat_native_capsule` from business diffs; verify safe-area avoidance instead.
 - Host-tool or local-environment changes require explicit user approval before QA or Acceptance proceeds.
 - Human feedback can enter the same learning loop through `record-feedback`.
+- Memory retrieval is keyword-first: use CLI search over raw/extracted/graph memory and include relevant hits in the stage contract; reserve graph/AI reasoning for weak implicit relationships.
 
 ## Completion Signals
 
@@ -96,10 +98,11 @@ Every active session maintains these artifacts under the provided session artifa
 - Acceptance handoff is complete when `acceptance_report.md` records `recommended_go`, `recommended_no_go`, or `blocked`, and any declared review contract is satisfied or explicitly blocked.
 - The Agent Team workflow is not done until the human records the Go/No-Go decision.
 
-## Continue after session bootstrap:
+## Continue after runtime driver bootstrap:
 
-- inspect and implement in the real repository
+- use `agent-team run-requirement --session-id <id>` to continue an existing session after human approval
+- inspect and implement in the real repository through the active stage executor
 - execute real verification against the runnable path when feasible
-- collect concrete evidence for QA and Acceptance decisions
+- collect concrete evidence for QA and Acceptance decisions through stage-result evidence
 - route actionable QA, Acceptance, and human-feedback findings back to the correct role
 - if evidence is missing, report blocked instead of accepted

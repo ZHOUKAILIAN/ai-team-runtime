@@ -21,13 +21,25 @@ class DocsTests(unittest.TestCase):
         self.assertIn("releases/download/v0.1.0/install.sh", readme)
         self.assertIn("Python 3.13+", readme)
         self.assertIn("CHANGELOG.md", readme)
+        self.assertIn("agent-team run-requirement", readme)
         self.assertIn("agent-team start-session", readme)
+        self.assertIn("agent-team dev", readme)
+        self.assertIn("agent-team skill list", readme)
+        self.assertIn("--executor claude-code", readme)
         self.assertIn("agent-team current-stage", readme)
         self.assertIn("agent-team build-stage-contract", readme)
         self.assertIn("agent-team submit-stage-result", readme)
         self.assertIn("agent-team record-human-decision", readme)
         self.assertIn("agent-team board-snapshot", readme)
         self.assertIn("agent-team serve-board", readme)
+
+    def test_readme_documents_interactive_dev_workflow(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        readme = (repo_root / "README.md").read_text()
+
+        self.assertIn("Interactive terminal workflow", readme)
+        self.assertIn("agent-team dev", readme)
+        self.assertIn("confirms acceptance criteria", readme)
 
     def test_readme_keeps_authoritative_team_workflow_contract(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
