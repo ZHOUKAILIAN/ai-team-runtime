@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-- No unreleased entries yet.
+- Removed the legacy project-local Codex bridge initialization path; use `init-state`, `init-project-structure`, `dev`, or `run-requirement` directly.
 
 ## [0.2.0b3] - 2026-04-26
 
@@ -10,7 +10,7 @@
 
 ## [0.2.0b2] - 2026-04-26
 
-- Fixed `codex-init` generated agents so they use packaged role context and no longer require repo-local Product/Dev/QA/Acceptance role directories.
+- Fixed generated project-local agents so they use packaged role context and no longer require repo-local Product/Dev/QA/Acceptance role directories.
 
 ## [0.2.0b1] - 2026-04-26
 

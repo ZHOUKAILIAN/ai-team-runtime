@@ -108,10 +108,10 @@ agent-team record-human-decision --session-id <session_id> --decision go
 agent-team init-state
 ```
 
-初始化项目级 bridge 文件：
+初始化项目级文档结构：
 
 ```bash
-agent-team codex-init
+agent-team init-project-structure
 ```
 
 查看当前阶段：
