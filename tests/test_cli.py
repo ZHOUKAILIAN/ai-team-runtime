@@ -1,7 +1,6 @@
 import os
 import subprocess
 import sys
-import tomllib
 import unittest
 import json
 from pathlib import Path
@@ -51,9 +50,11 @@ class CliTests(unittest.TestCase):
         self.assertIn("run", result.stdout)
         self.assertIn("review", result.stdout)
         self.assertIn("agent-run", result.stdout)
+        self.assertIn("init-state", result.stdout)
+        self.assertIn("init-project-structure", result.stdout)
         self.assertIn("start-session", result.stdout)
         self.assertIn("run-requirement", result.stdout)
-        self.assertIn("codex-init", result.stdout)
+        self.assertNotIn("codex-init", result.stdout)
         self.assertIn("panel", result.stdout)
         self.assertIn("panel-snapshot", result.stdout)
         self.assertIn("status", result.stdout)
@@ -1858,67 +1859,6 @@ class CliTests(unittest.TestCase):
             self.assertIn("current_state: Dev", result.stdout)
             self.assertIn("current_stage: Dev", result.stdout)
             self.assertIn("human_decision: rework", result.stdout)
-
-    def test_codex_init_reports_project_scoped_codex_setup(self) -> None:
-        with TemporaryDirectory(dir=local_temp_dir()) as temp_dir:
-            repo_root = Path(temp_dir) / "repo"
-            repo_root.mkdir()
-            result = subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "agent_team",
-                    "--repo-root",
-                    str(repo_root),
-                    "--state-root",
-                    temp_dir,
-                    "codex-init",
-                ],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-
-            self.assertEqual(result.returncode, 0)
-            self.assertIn("state_root:", result.stdout)
-            self.assertIn("agents_dir:", result.stdout)
-            self.assertIn("run_skill:", result.stdout)
-            self.assertIn("generated_files: 5", result.stdout)
-            self.assertIn(".agents/skills/agent-team-run/SKILL.md", result.stdout)
-            self.assertIn("project_root:", result.stdout)
-            self.assertIn("recommended_context:", result.stdout)
-            self.assertIn("recommended_run_entry: $agent-team-run", result.stdout)
-            self.assertNotIn("$agent-team-init", result.stdout)
-            self.assertIn("$agent-team-run", result.stdout)
-            self.assertIn("manual_init_fallback:", result.stdout)
-            self.assertIn("manual_run_fallback:", result.stdout)
-            self.assertTrue((repo_root / ".codex" / "agents" / "agent_team_product.toml").exists())
-            self.assertTrue((repo_root / ".codex" / "agents" / "agent_team_dev.toml").exists())
-            self.assertTrue((repo_root / ".codex" / "agents" / "agent_team_qa.toml").exists())
-            self.assertTrue((repo_root / ".codex" / "agents" / "agent_team_acceptance.toml").exists())
-            self.assertTrue((repo_root / ".agents" / "skills" / "agent-team-run" / "SKILL.md").exists())
-            self.assertFalse((repo_root / ".codex" / "config.toml").exists())
-            product_agent_lines = (repo_root / ".codex" / "agents" / "agent_team_product.toml").read_text().splitlines()
-            product_agent = (repo_root / ".codex" / "agents" / "agent_team_product.toml").read_text()
-            agent_names = {
-                path.stem: tomllib.loads(path.read_text()).get("name")
-                for path in (repo_root / ".codex" / "agents").glob("agent_team_*.toml")
-            }
-            self.assertEqual(
-                agent_names,
-                {
-                    "agent_team_product": "agent_team_product",
-                    "agent_team_dev": "agent_team_dev",
-                    "agent_team_qa": "agent_team_qa",
-                    "agent_team_acceptance": "agent_team_acceptance",
-                },
-            )
-            self.assertIn('developer_instructions = """', product_agent_lines)
-            self.assertNotIn('instructions = """', product_agent_lines)
-            self.assertIn("runtime stage contract", product_agent)
-            self.assertIn("packaged Product role context", product_agent)
-            self.assertNotIn("Read and follow `Product/context.md`", product_agent)
-
 
 if __name__ == "__main__":
     unittest.main()

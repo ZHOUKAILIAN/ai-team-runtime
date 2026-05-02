@@ -16,7 +16,6 @@ from .interactive import DevController, DevControllerConfig, ExecutorAlignmentRu
 from .models import Finding, GateResult, StageResultEnvelope, WorkflowSummary
 from .orchestrator import WorkflowOrchestrator
 from .panel import build_panel_snapshot
-from .project_scaffold import scaffold_project_codex_files
 from .project_structure import ensure_project_structure
 from .skill_registry import STAGES, SOURCE_LABELS, SkillRegistry
 from .stage_harness import StageHarness
@@ -54,16 +53,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     init_parser = subparsers.add_parser("init-state", help="Create the workflow state directories.")
     init_parser.set_defaults(handler=_handle_init_state)
-
-    codex_init_parser = subparsers.add_parser(
-        "codex-init",
-        help="Generate project-local Codex workflow files and initialize local Agent Team state.",
-        description=(
-            "Generate project-local Codex workflow files and initialize local Agent Team state. "
-            "Use this once per clone before triggering the local Agent Team run skill."
-        ),
-    )
-    codex_init_parser.set_defaults(handler=_handle_codex_init)
 
     project_init_parser = subparsers.add_parser(
         "init-project-structure",
@@ -535,23 +524,6 @@ def _handle_init_state(args: argparse.Namespace) -> int:
     store = StateStore(args.state_root)
     store.ensure_layout()
     print(f"Initialized workflow state at {args.state_root}")
-    return 0
-
-
-def _handle_codex_init(args: argparse.Namespace) -> int:
-    store = StateStore(args.state_root)
-    store.ensure_layout()
-    written_paths = scaffold_project_codex_files(args.repo_root)
-
-    print(f"state_root: {args.state_root}")
-    print(f"project_root: {args.repo_root}")
-    print(f"agents_dir: {args.repo_root / '.codex' / 'agents'}")
-    print(f"run_skill: {args.repo_root / '.agents' / 'skills' / 'agent-team-run' / 'SKILL.md'}")
-    print(f"generated_files: {len(written_paths)}")
-    print("recommended_context: open Codex at the project root before using the local Agent Team run skill")
-    print("recommended_run_entry: $agent-team-run")
-    print(f"manual_init_fallback: {args.repo_root / 'scripts' / 'agent-team-init.sh'}")
-    print(f"manual_run_fallback: {args.repo_root / 'scripts' / 'agent-team-run.sh'} \"<your message>\"")
     return 0
 
 
