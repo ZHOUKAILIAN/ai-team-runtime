@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.2.0b5] - 2026-05-03
+
+- Fixed the release installer so fresh installs can resolve runtime dependencies from PyPI.
+- Documented that the installer needs network access to GitHub Releases and PyPI.
+
 ## [0.2.0b4] - 2026-05-03
 
 - Removed the legacy project-local Codex bridge initialization path; use `init`, `dev`, or `run-requirement` directly.

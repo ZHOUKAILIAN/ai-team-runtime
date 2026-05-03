@@ -182,6 +182,7 @@ runtime 不再默认拆出 repo 外的 `workspaces/`、`artifacts/`、`sessions/
 - Python 3.13+
 - `curl`
 - `shasum` 或 `sha256sum`
+- 能访问 GitHub Releases 和 PyPI；安装脚本会下载 release wheel，并让 `pip` 安装运行时依赖。
 
 安装最新版本：
 
@@ -192,7 +193,7 @@ curl -fsSL https://github.com/ZHOUKAILIAN/agent-team-runtime/releases/latest/dow
 安装当前 beta 版本：
 
 ```bash
-curl -fsSL https://github.com/ZHOUKAILIAN/agent-team-runtime/releases/download/v0.2.0b4/install.sh | sh
+curl -fsSL https://github.com/ZHOUKAILIAN/agent-team-runtime/releases/download/v0.2.0b5/install.sh | sh
 ```
 
 安装固定版本：
