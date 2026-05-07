@@ -25,7 +25,7 @@ class MemoryLayerTests(unittest.TestCase):
                     severity="high",
                     lesson="Preserve empty-state validation in regression coverage.",
                     proposed_context_update="Review empty-state behavior before handoff.",
-                    proposed_skill_update="Require visible empty-state evidence before reporting success.",
+                    proposed_contract_update="Require visible empty-state evidence before reporting success.",
                     evidence="acceptance_report.md",
                     evidence_kind="artifact",
                     required_evidence=["empty_state_screenshot"],

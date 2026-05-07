@@ -13,8 +13,8 @@ start-session
 -> Intake
 -> Product
 -> WaitForCEOApproval
--> TechPlan
--> WaitForTechPlanApproval
+-> Dev technical plan
+-> WaitForTechnicalPlanApproval
 -> Dev
 -> QA
 -> Acceptance
@@ -22,7 +22,7 @@ start-session
 -> Done
 ```
 
-其中 QA 失败会回到 Dev，Acceptance 的人工 `rework` 可以回到 Product、TechPlan 或 Dev。
+其中 QA 失败会回到 Dev，Acceptance 的人工 `rework` 可以回到 Product 或 Dev。
 
 ## 当前关键命令
 
@@ -48,7 +48,7 @@ start-session
 agent-team start-session --message "<你的需求>"
 ```
 
-创建后，当前 session 的全部运行态文件都会集中在 `.agent-team/<session_id>/`。
+创建后，人类可读阶段产物会集中在 `.agent-team/<session_id>/`，机器运行态文件会集中在 `.agent-team/_runtime/sessions/<session_id>/`。
 
 ### 2. 查看当前阶段
 
@@ -116,22 +116,22 @@ Product 正常完成后进入：
 
 只能通过人工决策推进：
 
-- `go` -> `TechPlan`
+- `go` -> `Dev`（先产出 technical_plan.md）
 - `rework` -> `Product`
 - `no-go` -> `Done`
 
-### TechPlan
+### Dev technical plan
 
-TechPlan 正常完成后进入：
+Dev 的技术方案 pass 正常完成后进入：
 
-- `WaitForTechPlanApproval`
+- `WaitForTechnicalPlanApproval`
 
-### WaitForTechPlanApproval
+### WaitForTechnicalPlanApproval
 
 只能通过人工决策推进：
 
 - `go` -> `Dev`
-- `rework` -> `TechPlan`
+- `rework` -> `Dev`（重新生成 technical_plan.md）
 - `no-go` -> `Done`
 
 ### Dev
@@ -167,18 +167,23 @@ Dev 正常完成后进入：
 - `go` -> `Done`
 - `no-go` -> `Done`
 - `rework Product` -> `Product`
-- `rework TechPlan` -> `TechPlan`
 - `rework Dev` -> `Dev`
 
 ## 当前事实来源
 
 当前流程事实来源是：
 
-- `workflow_summary.md`
-- `session.json`
-- `stage_runs/*.json`
-- stage records
-- result bundle
+- `.agent-team/<session_id>/` 下的人类可读阶段产物
+- `_runtime/sessions/<session_id>/workflow_summary.json`
+- `_runtime/sessions/<session_id>/session.json`
+- `_runtime/sessions/<session_id>/roles/<role>/attempt-001/execution-contexts/<role>-input-context.json`
+- `_runtime/sessions/<session_id>/roles/<role>/attempt-001/execution-contexts/<role>-task-contract.json`
+- `_runtime/sessions/<session_id>/roles/<role>/attempt-001/execution-contexts/<role>-output-schema.json`
+- `_runtime/sessions/<session_id>/roles/<role>/attempt-001/execution-contexts/<role>-agent-prompt-bundle.md`（仅 `--trace-prompts`）
+- `_runtime/sessions/<session_id>/roles/<role>/attempt-001/stage-results/<role>-stage-result.json`
+- `_runtime/sessions/<session_id>/roles/<role>/attempt-001/stage-results/<role>-output-<artifact-name>.md`
+- `_runtime/sessions/<session_id>/roles/<role>/attempt-001/command-outputs/<role>-command-stdout.txt`
+- `_runtime/sessions/<session_id>/roles/<role>/attempt-001/command-outputs/<role>-command-stderr.txt`
 
 只读看板读取这些事实来源，但不写入任何 workflow state。
 

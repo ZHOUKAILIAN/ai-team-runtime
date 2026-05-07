@@ -20,14 +20,19 @@ class ArtifactRef:
     summary: str
     sha256: str
     content_chars: int
+    artifact_path: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "name": self.name,
-            "summary": self.summary,
             "sha256": self.sha256,
             "content_chars": self.content_chars,
         }
+        if self.summary:
+            payload["summary"] = self.summary
+        if self.artifact_path:
+            payload["artifact_path"] = self.artifact_path
+        return payload
 
 
 @dataclass(slots=True)

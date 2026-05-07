@@ -4,7 +4,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from agent_team.skill_registry import SkillPreferences, SkillRegistry, skill_injection_text
+from agent_team.skill_registry import Skill, SkillPreferences, SkillRegistry, skill_injection_text
 
 
 class SkillRegistryTests(unittest.TestCase):
@@ -40,6 +40,29 @@ description: Project plan
         assert skill is not None
         self.assertEqual(skill.source, "project")
         self.assertIn("Project Plan", skill.content)
+
+    def test_project_skill_discovery_supports_product_stage(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            skill_dir = repo_root / "Product" / "skills" / "intake-review"
+            skill_dir.mkdir(parents=True)
+            (skill_dir / "SKILL.md").write_text(
+                """---
+name: intake-review
+description: Product intake review
+stage: Product
+---
+
+# Intake Review
+"""
+            )
+            registry = SkillRegistry(repo_root)
+
+            skills = registry.list_skills(stage="Product", source="project")
+
+        self.assertEqual([skill.name for skill in skills], ["intake-review"])
+        self.assertEqual(skills[0].source, "project")
+        self.assertEqual(skills[0].source_ref, str(skill_dir.resolve()))
 
     def test_personal_skill_path_is_supported(self) -> None:
         with TemporaryDirectory() as temp_dir, TemporaryDirectory() as personal_dir:
@@ -85,6 +108,21 @@ stage: QA
 
     def test_skill_injection_text_omits_empty_layer(self) -> None:
         self.assertEqual(skill_injection_text([]), "")
+
+    def test_skill_injection_text_includes_source_reference(self) -> None:
+        skill = Skill(
+            name="plan",
+            description="Plan first",
+            content="# Plan",
+            source="builtin",
+            path=Path("/skills/plan/SKILL.md"),
+            source_ref="https://example.com/skills/plan",
+        )
+
+        text = skill_injection_text([skill])
+
+        self.assertIn("<source_type>builtin</source_type>", text)
+        self.assertIn("<source_ref>https://example.com/skills/plan</source_ref>", text)
 
     def test_skill_preferences_format_last_uses_defaults_first(self) -> None:
         prefs = SkillPreferences()

@@ -11,7 +11,7 @@ class PackagedAssetTests(unittest.TestCase):
             target = Path(temp_dir) / "product-role"
             written = copy_packaged_tree(("roles", "Product"), target)
 
-            self.assertTrue((target / "SKILL.md").exists())
+            self.assertTrue((target / "contract.md").exists())
             self.assertTrue((target / "context.md").exists())
             self.assertTrue((target / "memory.md").exists())
             self.assertTrue(any(path.name == "context.md" for path in written))

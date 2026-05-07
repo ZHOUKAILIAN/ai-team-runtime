@@ -8,9 +8,10 @@ class StagePolicyTests(unittest.TestCase):
         policy = default_policy_registry().get("Product")
 
         self.assertEqual(policy.stage, "Product")
-        self.assertIn("prd.md", policy.required_outputs)
+        self.assertIn("product-requirements.md", policy.required_outputs)
+        self.assertIn("acceptance_plan.md", policy.required_outputs)
         self.assertEqual(policy.approval_rule, "requires_requirements_approval")
-        self.assertIn("explicit_acceptance_criteria", [spec.name for spec in policy.evidence_specs])
+        self.assertIn("explicit_acceptance_plan", [spec.name for spec in policy.evidence_specs])
 
     def test_policy_can_compile_to_stage_contract(self) -> None:
         from agent_team.stage_policies import default_policy_registry
@@ -19,7 +20,7 @@ class StagePolicyTests(unittest.TestCase):
             session_id="session-1",
             stage="Dev",
             contract_id="contract-dev",
-            input_artifacts={"request": ".agent-team/session/request.md"},
+            input_artifacts={"product": ".agent-team/session/product-requirements.md"},
             role_context="Dev role context",
         )
 

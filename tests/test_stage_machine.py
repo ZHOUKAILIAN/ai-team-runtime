@@ -16,7 +16,7 @@ class StageMachineTests(unittest.TestCase):
             session_id="session-1",
             stage="Product",
             status="completed",
-            artifact_name="prd.md",
+            artifact_name="product-requirements.md",
             artifact_content="# PRD\n\n## Acceptance Criteria\n- Verify the flow.\n",
         )
 
@@ -47,7 +47,7 @@ class StageMachineTests(unittest.TestCase):
         with self.assertRaises(StageTransitionError):
             StageMachine().advance(summary=summary, stage_result=result)
 
-    def test_human_go_decision_moves_from_ceo_wait_to_tech_plan(self) -> None:
+    def test_human_go_decision_moves_from_ceo_wait_to_dev_planning(self) -> None:
         from agent_team.models import WorkflowSummary
         from agent_team.stage_machine import StageMachine
 
@@ -60,8 +60,9 @@ class StageMachineTests(unittest.TestCase):
 
         updated = StageMachine().apply_human_decision(summary=summary, decision="go")
 
-        self.assertEqual(updated.current_state, "TechPlan")
-        self.assertEqual(updated.current_stage, "TechPlan")
+        self.assertEqual(updated.current_state, "Dev")
+        self.assertEqual(updated.current_stage, "Dev")
+        self.assertEqual(updated.dev_status, "planning")
         self.assertEqual(updated.human_decision, "go")
 
     def test_interactive_runtime_walks_through_tech_plan_dev_qa_and_acceptance(self) -> None:
@@ -77,20 +78,21 @@ class StageMachineTests(unittest.TestCase):
         )
 
         summary = machine.apply_human_decision(summary=summary, decision="go")
-        self.assertEqual(summary.current_state, "TechPlan")
-        self.assertEqual(summary.current_stage, "TechPlan")
+        self.assertEqual(summary.current_state, "Dev")
+        self.assertEqual(summary.current_stage, "Dev")
+        self.assertEqual(summary.dev_status, "planning")
 
         summary = machine.advance(
             summary=summary,
             stage_result=StageResultEnvelope(
                 session_id="session-1",
-                stage="TechPlan",
+                stage="Dev",
                 status="completed",
                 artifact_name="technical_plan.md",
                 artifact_content="# Technical Plan\n",
             ),
         )
-        self.assertEqual(summary.current_state, "WaitForTechPlanApproval")
+        self.assertEqual(summary.current_state, "WaitForTechnicalPlanApproval")
 
         summary = machine.apply_human_decision(summary=summary, decision="go")
         self.assertEqual(summary.current_state, "Dev")

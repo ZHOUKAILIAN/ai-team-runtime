@@ -6,7 +6,7 @@ from .models import RoleProfile
 from .packaged_assets import packaged_text
 from .project_structure import resolve_role_context_paths
 
-DEFAULT_ROLE_NAMES = ("Product", "TechPlan", "Dev", "QA", "Acceptance")
+DEFAULT_ROLE_NAMES = ("Product", "Dev", "QA", "Acceptance")
 
 
 def load_role_profiles(
@@ -20,30 +20,24 @@ def load_role_profiles(
         paths = resolve_role_context_paths(repo_root, role_name)
         role_dir = paths.role_dir
         context_path = paths.context_path
-        memory_path = paths.memory_path
-        skill_path = paths.guidance_path
+        contract_path = paths.guidance_path
         learning_dir = (state_root / "memory" / role_name) if state_root else None
         if paths.source != "packaged":
             base_context_text = _read_text(context_path)
-            base_memory_text = _read_text(memory_path)
-            base_skill_text = _read_text(skill_path)
+            base_contract_text = _read_text(contract_path)
         else:
             base_context_text = packaged_text("roles", role_name, "context.md")
-            base_memory_text = packaged_text("roles", role_name, "memory.md")
-            base_skill_text = packaged_text("roles", role_name, "SKILL.md")
+            base_contract_text = packaged_text("roles", role_name, "contract.md")
 
         profiles[role_name] = RoleProfile(
             name=role_name,
             role_dir=role_dir,
             context_path=context_path,
-            memory_path=memory_path,
-            skill_path=skill_path,
+            contract_path=contract_path,
             base_context_text=base_context_text,
-            base_memory_text=base_memory_text,
-            base_skill_text=base_skill_text,
+            base_contract_text=base_contract_text,
             learned_context_text=_read_text(learning_dir / "context_patch.md") if learning_dir else "",
-            learned_memory_text=_read_text(learning_dir / "lessons.md") if learning_dir else "",
-            learned_skill_text=_read_text(learning_dir / "skill_patch.md") if learning_dir else "",
+            learned_contract_text=_read_text(learning_dir / "contract_patch.md") if learning_dir else "",
         )
 
     return profiles

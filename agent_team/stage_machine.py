@@ -5,11 +5,11 @@ from dataclasses import replace
 from .models import StageResultEnvelope, WorkflowSummary
 
 
-VALID_REWORK_TARGETS = {"Product", "TechPlan", "Dev"}
+VALID_REWORK_TARGETS = {"Product", "Dev"}
 INTERACTIVE_RUNTIME_MODES = {"runtime_driver_interactive"}
 WAIT_STATES = {
     "WaitForCEOApproval",
-    "WaitForTechPlanApproval",
+    "WaitForTechnicalPlanApproval",
     "WaitForDevApproval",
     "WaitForQAApproval",
     "WaitForHumanDecision",
@@ -43,11 +43,12 @@ class StageMachine:
                 current_stage="ProductDraft",
                 prd_status="drafted",
             )
-        if stage_result.stage == "TechPlan":
+        if stage_result.stage == "Dev" and stage_result.artifact_name == "technical_plan.md":
             return replace(
                 summary,
-                current_state="WaitForTechPlanApproval",
-                current_stage="TechPlan",
+                current_state="WaitForTechnicalPlanApproval",
+                current_stage="Dev",
+                dev_status="plan_drafted",
             )
         if stage_result.stage == "Dev":
             if _is_interactive_runtime(summary):
@@ -125,8 +126,9 @@ class StageMachine:
             if normalized == "go":
                 return replace(
                     summary,
-                    current_state="TechPlan",
-                    current_stage="TechPlan",
+                    current_state="Dev",
+                    current_stage="Dev",
+                    dev_status="planning",
                     human_decision=normalized,
                 )
             if normalized == "rework":
@@ -141,27 +143,29 @@ class StageMachine:
                 current_state="Done",
                 current_stage="ProductDraft",
                 human_decision=normalized,
-            )
+                )
 
-        if summary.current_state == "WaitForTechPlanApproval":
+        if summary.current_state == "WaitForTechnicalPlanApproval":
             if normalized == "go":
                 return replace(
                     summary,
                     current_state="Dev",
                     current_stage="Dev",
+                    dev_status="plan_approved",
                     human_decision=normalized,
                 )
             if normalized == "rework":
                 return replace(
                     summary,
-                    current_state="TechPlan",
-                    current_stage="TechPlan",
+                    current_state="Dev",
+                    current_stage="Dev",
+                    dev_status="planning",
                     human_decision=normalized,
                 )
             return replace(
                 summary,
                 current_state="Done",
-                current_stage="TechPlan",
+                current_stage="Dev",
                 human_decision=normalized,
             )
 
@@ -219,7 +223,7 @@ class StageMachine:
                 )
             target = target_stage or ""
             if target not in VALID_REWORK_TARGETS:
-                raise StageTransitionError("Rework decisions require target_stage Product, TechPlan, or Dev.")
+                raise StageTransitionError("Rework decisions require target_stage Product or Dev.")
             return replace(
                 summary,
                 current_state=target,

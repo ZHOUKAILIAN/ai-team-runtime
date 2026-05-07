@@ -66,35 +66,44 @@ class PolicyRegistry:
         )
 
 
+def dev_technical_plan_policy() -> StagePolicy:
+    return StagePolicy(
+        stage="Dev",
+        goal=(
+            "As Dev, draft a concrete technical implementation plan from the approved PRD and "
+            "acceptance plan without editing code, then stop for technical plan approval."
+        ),
+        required_outputs=["technical_plan.md"],
+        evidence_specs=[
+            EvidenceRequirement(
+                name="implementation_plan",
+                allowed_kinds=["artifact", "report"],
+                required_fields=["summary"],
+            )
+        ],
+        approval_rule="requires_technical_plan_approval",
+        allow_findings=False,
+    )
+
+
 def default_policy_registry() -> PolicyRegistry:
     return PolicyRegistry(
         [
             StagePolicy(
                 stage="Product",
-                goal="Draft a PRD with explicit acceptance criteria and stop for requirements approval.",
-                required_outputs=["prd.md"],
+                goal=(
+                    "Draft a PRD that links to a separate acceptance plan, write that acceptance plan with a "
+                    "back-link to the PRD and concrete verification steps, then stop for requirements approval."
+                ),
+                required_outputs=["product-requirements.md", "acceptance_plan.md"],
                 evidence_specs=[
                     EvidenceRequirement(
-                        name="explicit_acceptance_criteria",
+                        name="explicit_acceptance_plan",
                         allowed_kinds=["artifact", "report"],
                         required_fields=["summary"],
                     )
                 ],
                 approval_rule="requires_requirements_approval",
-                allow_findings=False,
-            ),
-            StagePolicy(
-                stage="TechPlan",
-                goal="Draft a concrete technical implementation plan from the approved PRD without editing code.",
-                required_outputs=["technical_plan.md"],
-                evidence_specs=[
-                    EvidenceRequirement(
-                        name="implementation_plan",
-                        allowed_kinds=["artifact", "report"],
-                        required_fields=["summary"],
-                    )
-                ],
-                approval_rule="requires_technical_plan_approval",
                 allow_findings=False,
             ),
             StagePolicy(
@@ -130,7 +139,7 @@ def default_policy_registry() -> PolicyRegistry:
             ),
             StagePolicy(
                 stage="Acceptance",
-                goal="Validate user-visible behavior against the approved acceptance criteria.",
+                goal="Validate user-visible behavior against the approved acceptance plan.",
                 required_outputs=["acceptance_report.md"],
                 evidence_specs=[
                     EvidenceRequirement(
@@ -139,7 +148,7 @@ def default_policy_registry() -> PolicyRegistry:
                         required_fields=["summary"],
                     )
                 ],
-                failback_targets=["Product", "TechPlan", "Dev"],
+                failback_targets=["Product", "Dev"],
             ),
         ]
     )

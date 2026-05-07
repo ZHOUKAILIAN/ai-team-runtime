@@ -4,7 +4,7 @@
 
 ## 背景
 
-当前项目的默认流程是 `Product -> TechPlan -> Dev -> QA -> Acceptance`。`Ops` 只作为预留角色资产存在，没有进入默认执行链路，也没有参与 `run` / `dev` 的自动阶段推进。
+当前项目的默认流程是 `Product -> Dev technical plan -> Dev implementation -> QA -> Acceptance`。`Ops` 只作为预留角色资产存在，没有进入默认执行链路，也没有参与 `run` 的自动阶段推进。
 
 这会带来两个问题：
 
@@ -13,10 +13,9 @@
 
 ## 目标
 
-删除默认使用场景里的 `Ops`，让项目只保留实际在用的五个阶段：
+删除默认使用场景里的 `Ops`，让项目只保留实际在用的四个角色：
 
 - Product
-- TechPlan
 - Dev
 - QA
 - Acceptance
@@ -91,7 +90,7 @@
 
 删除完成后应满足：
 
-- 默认 `agent-team dev` / `agent-team run` 的流程里不会再加载 Ops。
+- 默认 `agent-team run` 的流程里不会再加载 Ops。
 - 新生成的文档不会再把 Ops 写进默认团队介绍。
 - 角色/技能列表里不会再出现 Ops，除非用户显式访问历史数据或兼容路径。
 - 旧 session 如果引用了 `Ops`，读取阶段名和 artifact 名不会崩。

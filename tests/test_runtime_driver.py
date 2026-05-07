@@ -23,7 +23,8 @@ class RuntimeDriverSchemaTests(unittest.TestCase):
                 properties = schema.get("properties", {})
                 required = schema.get("required", [])
                 self.assertEqual(schema.get("additionalProperties"), False, path)
-                self.assertEqual(set(required), set(properties), path)
+                for name in required:
+                    self.assertIn(name, properties, f"{path}: {name} in required but not properties")
                 for name, child in properties.items():
                     if isinstance(child, dict):
                         assert_strict_objects(child, f"{path}.{name}")
@@ -32,12 +33,15 @@ class RuntimeDriverSchemaTests(unittest.TestCase):
 
         assert_strict_objects(_stage_result_schema(), "$")
 
-    def test_stage_result_schema_allows_tech_plan_stage(self) -> None:
+    def test_stage_result_schema_excludes_runtime_control_fields(self) -> None:
         from agent_team.runtime_driver import _stage_result_schema
+        from agent_team.stage_payload import FORBIDDEN_STAGE_PAYLOAD_FIELDS
 
-        stage_enum = _stage_result_schema()["properties"]["stage"]["enum"]
+        properties = _stage_result_schema()["properties"]
 
-        self.assertIn("TechPlan", stage_enum)
+        for field in FORBIDDEN_STAGE_PAYLOAD_FIELDS:
+            self.assertNotIn(field, properties)
+        self.assertNotIn("supplemental_artifacts", properties)
 
     def test_codex_prompt_instructs_product_prd_chinese_without_non_goals(self) -> None:
         from agent_team.execution_context import StageExecutionContext
@@ -54,7 +58,7 @@ class RuntimeDriverSchemaTests(unittest.TestCase):
                 stage="Product",
                 goal="Write PRD",
                 contract_id="contract",
-                required_outputs=["prd.md"],
+                required_outputs=["product-requirements.md"],
             ),
             context=StageExecutionContext(
                 session_id="session",
@@ -66,7 +70,7 @@ class RuntimeDriverSchemaTests(unittest.TestCase):
                 approved_prd_summary="",
                 acceptance_matrix=[],
                 constraints=[],
-                required_outputs=["prd.md"],
+                required_outputs=["product-requirements.md"],
                 required_evidence=[],
                 relevant_artifacts=[],
                 actionable_findings=[
@@ -86,14 +90,17 @@ class RuntimeDriverSchemaTests(unittest.TestCase):
         prompt = _build_codex_prompt(request)
 
         self.assertIn("Write artifact_content primarily in Chinese", prompt)
+        self.assertIn("acceptance_plan_content is acceptance_plan.md", prompt)
         self.assertIn("需求背景", prompt)
-        self.assertIn("Human revision requests", prompt)
+        self.assertIn("<human_revision_requests>", prompt)
+        self.assertIn("product-requirements.md must contain a clear Markdown link to `acceptance_plan.md`", prompt)
+        self.assertIn("acceptance_plan.md must begin with a clear Markdown link back to `product-requirements.md`", prompt)
         self.assertIn("在桌面生成文件", prompt)
         self.assertIn("fold them into the PRD's goals", prompt)
         self.assertNotIn("Non-Goals", prompt)
         self.assertNotIn("非目标", prompt)
 
-    def test_codex_prompt_instructs_tech_plan_tables_and_flowcharts(self) -> None:
+    def test_codex_prompt_instructs_dev_technical_plan_tables_and_flowcharts(self) -> None:
         from agent_team.execution_context import StageExecutionContext
         from agent_team.models import StageContract
         from agent_team.runtime_driver import StageExecutionRequest, _build_codex_prompt
@@ -102,17 +109,17 @@ class RuntimeDriverSchemaTests(unittest.TestCase):
             repo_root=Path("/repo"),
             state_store=None,
             session_id="session",
-            run_id="techplan-run-1",
+            run_id="dev-run-1",
             contract=StageContract(
                 session_id="session",
-                stage="TechPlan",
+                stage="Dev",
                 goal="Write technical plan",
                 contract_id="contract",
                 required_outputs=["technical_plan.md"],
             ),
             context=StageExecutionContext(
                 session_id="session",
-                stage="TechPlan",
+                stage="Dev",
                 round_index=1,
                 context_id="context",
                 contract_id="contract",
@@ -132,7 +139,9 @@ class RuntimeDriverSchemaTests(unittest.TestCase):
 
         prompt = _build_codex_prompt(request)
 
-        self.assertIn("Write artifact_content primarily in Chinese", prompt)
+        self.assertIn("You are Dev, but this pass is only the technical plan approval step", prompt)
+        self.assertIn("Write artifact_content as technical_plan.md", prompt)
+        self.assertIn("Do not edit repository source code", prompt)
         self.assertIn("Prefer Mermaid flowcharts", prompt)
         self.assertIn("Markdown tables", prompt)
         self.assertIn("Avoid bullet lists", prompt)
@@ -169,7 +178,7 @@ class RuntimeDriverSchemaTests(unittest.TestCase):
                 required_outputs=["implementation.md"],
                 required_evidence=[],
                 relevant_artifacts=[],
-                approved_tech_plan_content="# 技术方案\n\n- 按 TechPlan 创建 hello.js。\n",
+                approved_tech_plan_content="# 技术方案\n\n- 按已确认技术方案创建 hello.js。\n",
             ),
             contract_path=Path("/tmp/contract.json"),
             context_path=Path("/tmp/context.json"),
@@ -180,12 +189,78 @@ class RuntimeDriverSchemaTests(unittest.TestCase):
         prompt = _build_codex_prompt(request)
 
         self.assertIn("Treat StageExecutionContext.approved_tech_plan_content as the approved implementation plan", prompt)
-        self.assertIn("按 TechPlan 创建 hello.js", prompt)
+        self.assertIn("按已确认技术方案创建 hello.js", prompt)
+
+    def test_codex_prompt_includes_enabled_skills(self) -> None:
+        from agent_team.execution_context import StageExecutionContext
+        from agent_team.models import StageContract
+        from agent_team.runtime_driver import StageExecutionRequest, _build_codex_prompt
+        from agent_team.skill_registry import Skill
+
+        request = StageExecutionRequest(
+            repo_root=Path("/repo"),
+            state_store=None,
+            session_id="session",
+            run_id="dev-run-1",
+            contract=StageContract(
+                session_id="session",
+                stage="Dev",
+                goal="Implement",
+                contract_id="contract",
+                required_outputs=["implementation.md"],
+            ),
+            context=StageExecutionContext(
+                session_id="session",
+                stage="Dev",
+                round_index=1,
+                context_id="context",
+                contract_id="contract",
+                original_request_summary="写个js文件，并打印hello world",
+                approved_prd_summary="# 需求方案",
+                acceptance_matrix=[],
+                constraints=[],
+                required_outputs=["implementation.md"],
+                required_evidence=[],
+                relevant_artifacts=[],
+                approved_tech_plan_content="# 技术方案\n\n- 按已确认技术方案创建 hello.js。\n",
+            ),
+            contract_path=Path("/tmp/contract.json"),
+            context_path=Path("/tmp/context.json"),
+            result_path=Path("/tmp/result.json"),
+            output_schema_path=Path("/tmp/schema.json"),
+            skill_asset_root=Path(
+                "/repo/.agent-team/_runtime/sessions/session/roles/dev/attempt-001/execution-contexts/skills/.agent-team/skills"
+            ),
+            skills=[
+                Skill(
+                    name="plan",
+                    description="Plan the implementation",
+                    content="# Plan\n\nDo the plan.",
+                    source="builtin",
+                    path=Path("/skills/plan/SKILL.md"),
+                    source_ref="https://example.com/skills/plan",
+                    stages=("Dev",),
+                    delivery="sandbox",
+                )
+            ],
+        )
+
+        prompt = _build_codex_prompt(request)
+
+        self.assertIn("<enabled_skills>", prompt)
+        self.assertIn('<skill name="plan">', prompt)
+        self.assertIn("<source_type>builtin</source_type>", prompt)
+        self.assertIn("<source_ref>https://example.com/skills/plan</source_ref>", prompt)
+        self.assertIn(
+            "<asset_root>/repo/.agent-team/_runtime/sessions/session/roles/dev/attempt-001/execution-contexts/skills/.agent-team/skills/plan/</asset_root>",
+            prompt,
+        )
+        self.assertIn("Do the plan", prompt)
 
     def test_dry_run_product_artifact_omits_non_goals(self) -> None:
         from agent_team.execution_context import StageExecutionContext
         from agent_team.models import Finding
-        from agent_team.runtime_driver import _dry_run_artifact_content
+        from agent_team.runtime_driver import _dry_run_artifact_content, _dry_run_supplemental_artifacts
 
         context = StageExecutionContext(
             session_id="session",
@@ -197,7 +272,7 @@ class RuntimeDriverSchemaTests(unittest.TestCase):
             approved_prd_summary="",
             acceptance_matrix=[],
             constraints=[],
-            required_outputs=["prd.md"],
+            required_outputs=["product-requirements.md"],
             required_evidence=[],
             relevant_artifacts=[],
             actionable_findings=[
@@ -216,6 +291,9 @@ class RuntimeDriverSchemaTests(unittest.TestCase):
         self.assertIn("在桌面生成文件", artifact)
         self.assertNotIn("Non-Goals", artifact)
         self.assertNotIn("非目标", artifact)
+        supplemental = _dry_run_supplemental_artifacts("Product", context)
+        self.assertIn("acceptance_plan.md", supplemental)
+        self.assertIn("数据库", supplemental["acceptance_plan.md"])
 
     def test_codex_exec_stage_executor_skips_git_repo_check(self) -> None:
         from agent_team.execution_context import StageExecutionContext
@@ -230,20 +308,16 @@ class RuntimeDriverSchemaTests(unittest.TestCase):
             output_path.write_text(
                 json.dumps(
                     {
-                        "session_id": "session",
-                        "stage": "Product",
                         "status": "completed",
-                        "artifact_name": "prd.md",
                         "artifact_content": "# PRD\n",
-                        "contract_id": "contract",
                         "journal": "",
                         "findings": [],
                         "evidence": [],
                         "suggested_next_owner": "",
                         "summary": "Product completed.",
                         "acceptance_status": "",
+                        "acceptance_plan_content": "",
                         "blocked_reason": "",
-                        "supplemental_artifacts": {},
                     }
                 )
             )
@@ -261,7 +335,7 @@ class RuntimeDriverSchemaTests(unittest.TestCase):
                     stage="Product",
                     goal="Write a PRD.",
                     contract_id="contract",
-                    required_outputs=["prd.md"],
+                    required_outputs=["product-requirements.md"],
                 ),
                 context=StageExecutionContext(
                     session_id="session",
@@ -273,7 +347,7 @@ class RuntimeDriverSchemaTests(unittest.TestCase):
                     approved_prd_summary="",
                     acceptance_matrix=[],
                     constraints=[],
-                    required_outputs=["prd.md"],
+                    required_outputs=["product-requirements.md"],
                     required_evidence=[],
                     relevant_artifacts=[],
                 ),
@@ -281,13 +355,48 @@ class RuntimeDriverSchemaTests(unittest.TestCase):
                 context_path=root / "context.json",
                 result_path=root / "result.json",
                 output_schema_path=root / "schema.json",
+                prompt_path=root / "prompt.md",
             )
 
             with patch("agent_team.runtime_driver.subprocess.run", fake_run):
-                CodexExecStageExecutor(RuntimeDriverOptions()).execute(request)
+                envelope = CodexExecStageExecutor(RuntimeDriverOptions()).execute(request)
 
         self.assertEqual(len(commands), 1)
         self.assertIn("--skip-git-repo-check", commands[0])
+        self.assertEqual(envelope.session_id, "session")
+        self.assertEqual(envelope.stage, "Product")
+        self.assertEqual(envelope.contract_id, "contract")
+        self.assertEqual(envelope.artifact_name, "product-requirements.md")
+
+    def test_stage_payload_parser_rejects_runtime_control_fields(self) -> None:
+        from agent_team.runtime_driver import _stage_result_from_json_text
+
+        request = SimpleNamespace(
+            session_id="runtime-session",
+            contract=SimpleNamespace(stage="Product", contract_id="runtime-contract"),
+        )
+        result = _stage_result_from_json_text(
+            request=request,
+            value=json.dumps(
+                {
+                    "stage": "Product",
+                    "status": "completed",
+                    "artifact_content": "# PRD\n",
+                    "journal": "",
+                    "findings": [],
+                    "evidence": [],
+                    "suggested_next_owner": "",
+                    "summary": "done",
+                    "acceptance_status": "",
+                    "acceptance_plan_content": "",
+                    "blocked_reason": "",
+                }
+            ),
+            source="stdout",
+        )
+
+        self.assertEqual(result.status, "blocked")
+        self.assertIn("runtime-controlled field(s): stage", result.blocked_reason)
 
     def test_stage_run_streams_accept_timeout_bytes(self) -> None:
         from agent_team.runtime_driver import _write_stage_run_streams
@@ -335,11 +444,21 @@ class RuntimeDriverTraceTests(unittest.TestCase):
             session_id = dict(
                 line.split(": ", 1) for line in result.stdout.splitlines() if ": " in line
             )["session_id"]
-            trace_path = Path(temp_dir) / session_id / "stage_runs" / "product-run-1_trace.json"
-            trace = json.loads(trace_path.read_text())
+            stage_result_path = (
+                Path(temp_dir)
+                / "_runtime"
+                / "sessions"
+                / session_id
+                / "roles"
+                / "product"
+                / "attempt-001"
+                / "stage-results"
+                / "product-stage-result.json"
+            )
+            stage_result = json.loads(stage_result_path.read_text())
 
         self.assertEqual(
-            [step["step"] for step in trace["steps"]],
+            [step["step"] for step in stage_result["steps"]],
             [
                 "contract_built",
                 "execution_context_built",
@@ -351,7 +470,50 @@ class RuntimeDriverTraceTests(unittest.TestCase):
                 "state_advanced",
             ],
         )
-        self.assertTrue(all(step["status"] == "ok" for step in trace["steps"]))
+        self.assertTrue(all(step["status"] == "ok" for step in stage_result["steps"]))
+        self.assertIn("stage_result", stage_result)
+        self.assertNotIn("artifact_content", stage_result["stage_result"])
+        self.assertNotIn("supplemental_artifacts", stage_result["stage_result"])
+        self.assertIn("supplemental_artifact_paths", stage_result["stage_result"])
+        self.assertFalse(
+            (
+                Path(temp_dir)
+                / "_runtime"
+                / "sessions"
+                / session_id
+                / "roles"
+                / "product"
+                / "attempt-001"
+                / "stage-results"
+                / "product-run-state.json"
+            ).exists()
+        )
+        self.assertFalse(
+            (
+                Path(temp_dir)
+                / "_runtime"
+                / "sessions"
+                / session_id
+                / "roles"
+                / "product"
+                / "attempt-001"
+                / "stage-results"
+                / "product-runtime-trace.json"
+            ).exists()
+        )
+        self.assertFalse(
+            (
+                Path(temp_dir)
+                / "_runtime"
+                / "sessions"
+                / session_id
+                / "roles"
+                / "product"
+                / "attempt-001"
+                / "execution-contexts"
+                / "product-agent-prompt-bundle.md"
+            ).exists()
+        )
 
     def test_runtime_trace_validator_blocks_missing_required_steps(self) -> None:
         from agent_team.runtime_driver import REQUIRED_PASS_TRACE_STEPS, _validate_runtime_trace
@@ -366,43 +528,92 @@ class RuntimeDriverTraceTests(unittest.TestCase):
 class RuntimeDriverInteractiveFlowTests(unittest.TestCase):
     def test_interactive_dry_run_stops_at_tech_plan_approval_after_product_go(self) -> None:
         from agent_team.runtime_driver import RuntimeDriverOptions, run_requirement
+        from agent_team.stage_machine import StageMachine
+        from agent_team.state import StateStore
 
         repo_root = Path(__file__).resolve().parents[1]
 
         with TemporaryDirectory(dir=local_temp_dir()) as temp_dir:
-            result = run_requirement(
+            state_root = Path(temp_dir)
+            product_result = run_requirement(
                 repo_root=repo_root,
-                state_root=Path(temp_dir),
+                state_root=state_root,
                 message="执行这个需求：写个js文件，并打印hello world",
                 options=RuntimeDriverOptions(
                     executor="dry-run",
                     interactive=True,
-                    auto_approve_product=True,
+                ),
+            )
+            store = StateStore(state_root)
+            session = store.load_session(product_result.session_id)
+            summary = store.load_workflow_summary(product_result.session_id)
+            store.save_workflow_summary(session, StageMachine().apply_human_decision(summary=summary, decision="go"))
+            result = run_requirement(
+                repo_root=repo_root,
+                state_root=state_root,
+                session_id=product_result.session_id,
+                options=RuntimeDriverOptions(
+                    executor="dry-run",
+                    interactive=True,
                 ),
             )
 
             self.assertEqual(result.status, "waiting_human")
-            self.assertEqual(result.current_state, "WaitForTechPlanApproval")
-            self.assertEqual(result.current_stage, "TechPlan")
-            self.assertEqual(result.stage_run_count, 2)
+            self.assertEqual(result.current_state, "WaitForTechnicalPlanApproval")
+            self.assertEqual(result.current_stage, "Dev")
+            self.assertEqual(result.stage_run_count, 1)
             session_dir = Path(temp_dir) / result.session_id
-            self.assertTrue((session_dir / "prd.md").exists())
+            self.assertTrue((session_dir / "product-requirements.md").exists())
+            self.assertTrue((session_dir / "acceptance_plan.md").exists())
             self.assertTrue((session_dir / "technical_plan.md").exists())
 
     def test_auto_advance_intermediate_stops_at_final_acceptance_gate(self) -> None:
         from agent_team.runtime_driver import RuntimeDriverOptions, run_requirement
+        from agent_team.stage_machine import StageMachine
+        from agent_team.state import StateStore
 
         repo_root = Path(__file__).resolve().parents[1]
 
         with TemporaryDirectory(dir=local_temp_dir()) as temp_dir:
-            result = run_requirement(
+            state_root = Path(temp_dir)
+            product_result = run_requirement(
                 repo_root=repo_root,
-                state_root=Path(temp_dir),
+                state_root=state_root,
                 message="执行这个需求：写个js文件，并打印hello world",
                 options=RuntimeDriverOptions(
                     executor="dry-run",
                     interactive=True,
-                    auto_approve_product=True,
+                ),
+            )
+            store = StateStore(state_root)
+            session = store.load_session(product_result.session_id)
+            summary = store.load_workflow_summary(product_result.session_id)
+            store.save_workflow_summary(session, StageMachine().apply_human_decision(summary=summary, decision="go"))
+            result = run_requirement(
+                repo_root=repo_root,
+                state_root=state_root,
+                session_id=product_result.session_id,
+                options=RuntimeDriverOptions(
+                    executor="dry-run",
+                    interactive=True,
+                    auto_advance_intermediate=True,
+                ),
+            )
+
+            self.assertEqual(result.status, "waiting_human")
+            self.assertEqual(result.current_state, "WaitForTechnicalPlanApproval")
+            self.assertEqual(result.current_stage, "Dev")
+            self.assertEqual(result.stage_run_count, 1)
+            summary = store.load_workflow_summary(product_result.session_id)
+            store.save_workflow_summary(session, StageMachine().apply_human_decision(summary=summary, decision="go"))
+
+            result = run_requirement(
+                repo_root=repo_root,
+                state_root=state_root,
+                session_id=product_result.session_id,
+                options=RuntimeDriverOptions(
+                    executor="dry-run",
+                    interactive=True,
                     auto_advance_intermediate=True,
                 ),
             )
@@ -410,9 +621,10 @@ class RuntimeDriverInteractiveFlowTests(unittest.TestCase):
             self.assertEqual(result.status, "waiting_human")
             self.assertEqual(result.current_state, "WaitForHumanDecision")
             self.assertEqual(result.current_stage, "Acceptance")
-            self.assertEqual(result.stage_run_count, 5)
+            self.assertEqual(result.stage_run_count, 3)
             session_dir = Path(temp_dir) / result.session_id
-            self.assertTrue((session_dir / "prd.md").exists())
+            self.assertTrue((session_dir / "product-requirements.md").exists())
+            self.assertTrue((session_dir / "acceptance_plan.md").exists())
             self.assertTrue((session_dir / "technical_plan.md").exists())
             self.assertTrue((session_dir / "implementation.md").exists())
             self.assertTrue((session_dir / "qa_report.md").exists())
@@ -420,6 +632,7 @@ class RuntimeDriverInteractiveFlowTests(unittest.TestCase):
 
     def test_interactive_driver_blocks_invalid_stage_identity_without_traceback(self) -> None:
         from agent_team.runtime_driver import RuntimeDriverOptions, run_requirement
+        from agent_team.stage_machine import StageMachine
         from agent_team.state import StateStore
 
         repo_root = Path(__file__).resolve().parents[1]
@@ -430,18 +643,16 @@ class RuntimeDriverInteractiveFlowTests(unittest.TestCase):
                 "import json, os\n"
                 "stage = os.environ['AGENT_TEAM_STAGE']\n"
                 "contract = json.loads(open(os.environ['AGENT_TEAM_CONTRACT_PATH']).read())\n"
+                "technical_plan = stage == 'Dev' and 'technical_plan.md' in contract.get('required_outputs', [])\n"
                 "payload = {\n"
-                "    'session_id': os.environ['AGENT_TEAM_SESSION_ID'],\n"
-                "    'stage': 'Product' if stage == 'TechPlan' else stage,\n"
                 "    'status': 'completed',\n"
-                "    'artifact_name': 'technical_plan.md' if stage == 'TechPlan' else 'prd.md',\n"
-                "    'artifact_content': '# Technical Plan\\n' if stage == 'TechPlan' else '# PRD\\n\\n## Acceptance Criteria\\n- Works.\\n',\n"
-                "    'contract_id': contract['contract_id'],\n"
+                "    'artifact_content': '# Technical Plan\\n' if technical_plan else '# PRD\\n\\n## Acceptance Plan\\n- [Acceptance Plan](acceptance_plan.md)\\n',\n"
+                "    'acceptance_plan_content': '' if technical_plan else '# Acceptance Plan\\n\\n## Requirements\\n- [PRD](product-requirements.md)\\n\\n## Verification\\n- Exercise the product path.\\n',\n"
                 "    'journal': '',\n"
                 "    'findings': [],\n"
                 "    'evidence': [\n"
                 "        {\n"
-                "            'name': 'implementation_plan' if stage == 'TechPlan' else 'explicit_acceptance_criteria',\n"
+                "            'name': 'implementation_plan' if technical_plan else 'explicit_acceptance_plan',\n"
                 "            'kind': 'report',\n"
                 "            'summary': 'Evidence provided.',\n"
                 "        }\n"
@@ -450,30 +661,44 @@ class RuntimeDriverInteractiveFlowTests(unittest.TestCase):
                 "    'summary': 'done',\n"
                 "    'acceptance_status': '',\n"
                 "    'blocked_reason': '',\n"
-                "    'supplemental_artifacts': {},\n"
                 "}\n"
+                "if technical_plan:\n"
+                "    payload['stage'] = 'Product'\n"
                 "open(os.environ['AGENT_TEAM_RESULT_BUNDLE'], 'w').write(json.dumps(payload))\n"
             )
 
-            result = run_requirement(
+            state_root = Path(temp_dir)
+            product_result = run_requirement(
                 repo_root=repo_root,
-                state_root=Path(temp_dir),
+                state_root=state_root,
                 message="执行这个需求：写个js文件，并打印hello world",
                 options=RuntimeDriverOptions(
                     executor="command",
                     executor_command=f"{sys.executable} {worker_path}",
                     interactive=True,
-                    auto_approve_product=True,
                 ),
             )
-            store = StateStore(Path(temp_dir))
+            store = StateStore(state_root)
+            session = store.load_session(product_result.session_id)
+            summary = store.load_workflow_summary(product_result.session_id)
+            store.save_workflow_summary(session, StageMachine().apply_human_decision(summary=summary, decision="go"))
+            result = run_requirement(
+                repo_root=repo_root,
+                state_root=state_root,
+                session_id=product_result.session_id,
+                options=RuntimeDriverOptions(
+                    executor="command",
+                    executor_command=f"{sys.executable} {worker_path}",
+                    interactive=True,
+                ),
+            )
             summary = store.load_workflow_summary(result.session_id)
-            run = store.latest_stage_run(result.session_id, stage="TechPlan")
+            run = store.latest_stage_run(result.session_id, stage="Dev")
 
             self.assertEqual(result.status, "blocked")
-            self.assertEqual(result.current_state, "TechPlan")
-            self.assertIn("invalid stage result", result.gate_reason)
-            self.assertIn("active run stage 'TechPlan'", result.gate_reason)
+            self.assertEqual(result.current_state, "Dev")
+            self.assertIn("Invalid stage payload JSON", result.gate_reason)
+            self.assertIn("runtime-controlled field(s): stage", result.gate_reason)
             self.assertEqual(summary.blocked_reason, result.gate_reason)
             self.assertIsNotNone(run)
             self.assertEqual(run.state, "BLOCKED")

@@ -11,7 +11,7 @@ class DocsTests(unittest.TestCase):
         self.assertIn("CLI-first", readme)
         self.assertIn("orchestration runtime", readme)
         self.assertIn("可自我进化", readme)
-        self.assertIn("Product / TechPlan / Dev / QA / Acceptance", readme)
+        self.assertIn("Product / Dev / QA / Acceptance", readme)
         self.assertNotIn("Ops", readme)
 
     def test_readme_documents_agent_team_cli_usage(self) -> None:
@@ -25,33 +25,32 @@ class DocsTests(unittest.TestCase):
         self.assertIn("agent-team run", readme)
         self.assertIn("--executor dry-run", readme)
         self.assertNotIn("--executor deterministic", readme)
-        self.assertIn("agent-team start-session", readme)
-        self.assertIn("agent-team dev", readme)
         self.assertIn("agent-team skill list", readme)
-        self.assertIn("--executor claude-code", readme)
-        self.assertIn("agent-team current-stage", readme)
-        self.assertIn("agent-team build-stage-contract", readme)
-        self.assertIn("agent-team submit-stage-result", readme)
+        self.assertIn("agent-team skill default Dev plan", readme)
         self.assertIn("agent-team record-human-decision", readme)
-        self.assertIn("agent-team board-snapshot", readme)
-        self.assertIn("agent-team serve-board", readme)
+        self.assertIn("agent-team verify-stage-result", readme)
         self.assertNotIn("install-codex-skill", readme)
         self.assertNotIn("codex-skill/agent-team-workflow", readme)
 
-    def test_readme_documents_interactive_dev_workflow(self) -> None:
+    def test_readme_documents_skill_default_workflow(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
         readme = (repo_root / "README.md").read_text()
 
-        self.assertIn("Interactive terminal workflow", readme)
-        self.assertIn("agent-team dev", readme)
-        self.assertIn("confirms acceptance criteria", readme)
+        self.assertIn("Skill defaults and runtime workflow", readme)
+        self.assertIn(".agent-team/skill-preferences.yaml", readme)
+        self.assertIn(
+            "_runtime/sessions/<session-id>/roles/<role>/attempt-001/stage-results/<role>-stage-result.json",
+            readme,
+        )
+        self.assertNotIn("<role>-run-state.json", readme)
+        self.assertIn("details.skill_injection", readme)
 
     def test_readme_keeps_authoritative_team_workflow_contract(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
         readme = (repo_root / "README.md").read_text()
 
         self.assertIn(
-            "Product -> CEO approval -> TechPlan -> Dev <-> QA -> Acceptance -> human Go/No-Go",
+            "Product -> PRD/acceptance approval -> Dev technical plan -> technical plan approval -> Dev implementation <-> QA -> Acceptance -> human Go/No-Go",
             readme,
         )
         self.assertIn("QA", readme)
@@ -110,9 +109,7 @@ class DocsTests(unittest.TestCase):
         readme = (repo_root / "README.md").read_text()
 
         self.assertIn("Codex App", codex_help)
-        self.assertIn("agent-team start-session", codex_help)
-        self.assertIn("agent-team build-stage-contract", codex_help)
-        self.assertIn("agent-team submit-stage-result", codex_help)
+        self.assertIn("agent-team", codex_help)
         self.assertIn("agent-team record-feedback", codex_help)
         self.assertIn("最小 harness 循环", codex_help)
         self.assertIn("Skill Standard", skill_integration)
@@ -122,7 +119,7 @@ class DocsTests(unittest.TestCase):
         self.assertIn("skill 是入口，不是流程控制器", skill_integration)
         self.assertIn("Codex-only", codex_harness)
         self.assertIn("runtime-first", codex_harness)
-        self.assertIn("agent-team step", codex_harness)
+        self.assertIn("agent-team", codex_harness)
         self.assertIn("M0", codex_harness)
         self.assertIn("M1", codex_harness)
         self.assertIn("M2", codex_harness)

@@ -41,7 +41,7 @@ class OrchestratorTests(unittest.TestCase):
                 if stage == "Product":
                     return StageOutput(
                         stage="Product",
-                        artifact_name="prd.md",
+                        artifact_name="product-requirements.md",
                         artifact_content="# Product PRD\n\n## Acceptance Criteria\n- Use figma-restoration-review.\n",
                         journal="# Product Journal\n",
                     )
@@ -80,13 +80,14 @@ class OrchestratorTests(unittest.TestCase):
                 backend=ReviewBackend(),
             ).run(request=request, contract=visual_review_contract())
 
+            runtime_session_dir = state_root / "_runtime" / "sessions" / result.session_id
             review = (state_root / result.session_id / "review.md").read_text()
-            summary = (state_root / result.session_id / "workflow_summary.md").read_text()
+            summary = json.loads((runtime_session_dir / "workflow_summary.json").read_text())
 
             self.assertEqual(result.acceptance_status, "blocked")
             self.assertIn("review_completion_gate", review)
-            self.assertIn("criteria_covered", (state_root / result.session_id / "review_completion.json").read_text())
-            self.assertIn("blocked_reason: Review completion gate is incomplete", summary)
+            self.assertIn("criteria_covered", (runtime_session_dir / "review_completion.json").read_text())
+            self.assertIn("Review completion gate is incomplete", summary["blocked_reason"])
 
     def test_review_completion_gate_passes_when_acceptance_outputs_required_artifacts(self) -> None:
         from agent_team.models import StageOutput
@@ -100,7 +101,7 @@ class OrchestratorTests(unittest.TestCase):
                 if stage == "Product":
                     return StageOutput(
                         stage="Product",
-                        artifact_name="prd.md",
+                        artifact_name="product-requirements.md",
                         artifact_content="# Product PRD\n\n## Acceptance Criteria\n- Use figma-restoration-review.\n",
                         journal="# Product Journal\n",
                     )
@@ -168,7 +169,7 @@ class OrchestratorTests(unittest.TestCase):
 
             def run_stage(self, *, stage, request, role, stage_artifacts, findings):
                 if stage == "Product":
-                    return StageOutput(stage="Product", artifact_name="prd.md", artifact_content="prd", journal="j")
+                    return StageOutput(stage="Product", artifact_name="product-requirements.md", artifact_content="prd", journal="j")
                 if stage == "Dev":
                     return StageOutput(stage="Dev", artifact_name="implementation.md", artifact_content="impl", journal="j")
                 if stage == "QA":
@@ -193,7 +194,7 @@ class OrchestratorTests(unittest.TestCase):
                 backend=TimelineBackend(),
             ).run(request="ship a visible timeline")
 
-            events_path = state_root / result.session_id / "events.jsonl"
+            events_path = state_root / "_runtime" / "sessions" / result.session_id / "events.jsonl"
             events = [json.loads(line) for line in events_path.read_text().splitlines()]
 
             event_kinds = [event["kind"] for event in events]
@@ -213,7 +214,7 @@ class OrchestratorTests(unittest.TestCase):
                 if stage == "Product":
                     return StageOutput(
                         stage="Product",
-                        artifact_name="prd.md",
+                        artifact_name="product-requirements.md",
                         artifact_content="# Product PRD\n\n## Acceptance Criteria\n- Freshly reread Figma nodes.\n",
                         journal="# Product Journal\n",
                     )
@@ -271,7 +272,7 @@ class OrchestratorTests(unittest.TestCase):
 
             def run_stage(self, *, stage, request, role, stage_artifacts, findings):
                 if stage == "Product":
-                    return StageOutput(stage="Product", artifact_name="prd.md", artifact_content="prd", journal="j")
+                    return StageOutput(stage="Product", artifact_name="product-requirements.md", artifact_content="prd", journal="j")
                 if stage == "Dev":
                     return StageOutput(stage="Dev", artifact_name="implementation.md", artifact_content="impl", journal="j")
                 if stage == "QA":
@@ -305,11 +306,13 @@ class OrchestratorTests(unittest.TestCase):
             )
 
             review = (state_root / result.session_id / "review.md").read_text()
-            summary = (state_root / result.session_id / "workflow_summary.md").read_text()
+            summary = json.loads(
+                (state_root / "_runtime" / "sessions" / result.session_id / "workflow_summary.json").read_text()
+            )
 
             self.assertEqual(result.acceptance_status, "blocked")
             self.assertIn("host_environment_change", review)
-            self.assertIn("explicit user approval", summary)
+            self.assertIn("explicit user approval", summary["blocked_reason"])
 
     def test_acceptance_findings_route_back_to_dev_until_acceptance_passes(self) -> None:
         from agent_team.models import Finding, StageOutput
@@ -326,7 +329,7 @@ class OrchestratorTests(unittest.TestCase):
                 if stage == "Product":
                     return StageOutput(
                         stage="Product",
-                        artifact_name="prd.md",
+                        artifact_name="product-requirements.md",
                         artifact_content="# Product PRD\n\n## Acceptance Criteria\n- Match the page-root visual audit.\n",
                         journal="# Product Journal\n",
                     )
@@ -364,7 +367,7 @@ class OrchestratorTests(unittest.TestCase):
                                     severity="high",
                                     lesson="Do not close visual parity from code review alone.",
                                     proposed_context_update="Require runtime visual evidence before closing page-root parity work.",
-                                    proposed_skill_update="Route page-root parity failures back to Dev until runtime visual evidence is attached.",
+                                    proposed_contract_update="Route page-root parity failures back to Dev until runtime visual evidence is attached.",
                                     evidence="acceptance_report",
                                 )
                             ],
@@ -389,7 +392,9 @@ class OrchestratorTests(unittest.TestCase):
                 backend=SequencedBackend(),
             ).run(request="Close the page-root parity gaps")
 
-            session_payload = (state_root / result.session_id / "session.json").read_text()
+            session_payload = (
+                state_root / "_runtime" / "sessions" / result.session_id / "session.json"
+            ).read_text()
             self.assertEqual(result.acceptance_status, "recommended_go")
             self.assertEqual(
                 [record.stage for record in result.stage_records],
@@ -469,16 +474,16 @@ class OrchestratorTests(unittest.TestCase):
                 backend=backend,
             ).run(request="Build a task manager")
 
-            summary_path = state_root / result.session_id / "workflow_summary.md"
-            summary = summary_path.read_text()
+            summary_path = state_root / "_runtime" / "sessions" / result.session_id / "workflow_summary.json"
+            summary = json.loads(summary_path.read_text())
 
-            self.assertIn("- runtime_mode: deterministic_demo", summary)
-            self.assertIn("- current_state: WaitForHumanDecision", summary)
-            self.assertIn("- current_stage: Acceptance", summary)
-            self.assertIn("- prd_status: drafted", summary)
-            self.assertIn("- dev_status: completed", summary)
-            self.assertIn("- qa_status: blocked", summary)
-            self.assertIn("- acceptance_status: recommended_no_go", summary)
+            self.assertEqual(summary["runtime_mode"], "deterministic_demo")
+            self.assertEqual(summary["current_state"], "WaitForHumanDecision")
+            self.assertEqual(summary["current_stage"], "Acceptance")
+            self.assertEqual(summary["prd_status"], "drafted")
+            self.assertEqual(summary["dev_status"], "completed")
+            self.assertEqual(summary["qa_status"], "blocked")
+            self.assertEqual(summary["acceptance_status"], "recommended_no_go")
 
     def test_review_includes_workflow_status_from_orchestrator_run(self) -> None:
         from agent_team.backend import StaticBackend

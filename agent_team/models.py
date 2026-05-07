@@ -22,7 +22,7 @@ class Finding:
     severity: str = "medium"
     lesson: str = ""
     proposed_context_update: str = ""
-    proposed_skill_update: str = ""
+    proposed_contract_update: str = ""
     evidence: str = ""
     evidence_kind: str = ""
     required_evidence: list[str] = field(default_factory=list)
@@ -37,7 +37,7 @@ class Finding:
             severity=payload.get("severity", "medium"),
             lesson=payload.get("lesson", ""),
             proposed_context_update=payload.get("proposed_context_update", ""),
-            proposed_skill_update=payload.get("proposed_skill_update", ""),
+            proposed_contract_update=payload.get("proposed_contract_update", ""),
             evidence=payload.get("evidence", ""),
             evidence_kind=payload.get("evidence_kind", ""),
             required_evidence=list(payload.get("required_evidence", [])),
@@ -104,26 +104,23 @@ class RoleProfile:
     name: str
     role_dir: Path
     context_path: Path
-    memory_path: Path
-    skill_path: Path
+    contract_path: Path
     base_context_text: str
-    base_memory_text: str
-    base_skill_text: str
+    base_contract_text: str
     learned_context_text: str = ""
-    learned_memory_text: str = ""
-    learned_skill_text: str = ""
+    learned_contract_text: str = ""
 
     @property
     def effective_context_text(self) -> str:
         return _join_sections(self.base_context_text, self.learned_context_text)
 
     @property
-    def effective_memory_text(self) -> str:
-        return _join_sections(self.base_memory_text, self.learned_memory_text)
+    def effective_contract_text(self) -> str:
+        return _join_sections(self.base_contract_text, self.learned_contract_text)
 
     @property
     def effective_skill_text(self) -> str:
-        return _join_sections(self.base_skill_text, self.learned_skill_text)
+        return self.effective_contract_text
 
 
 @model_dataclass
@@ -160,7 +157,7 @@ class FeedbackRecord:
     created_at: str
     lesson: str = ""
     proposed_context_update: str = ""
-    proposed_skill_update: str = ""
+    proposed_contract_update: str = ""
     evidence: str = ""
     evidence_kind: str = ""
     required_evidence: list[str] = field(default_factory=list)
@@ -336,18 +333,31 @@ class StageResultEnvelope:
     acceptance_status: str = ""
     blocked_reason: str = ""
     supplemental_artifacts: dict[str, str] = field(default_factory=dict)
+    artifact_path: str = ""
 
     def __post_init__(self) -> None:
         self.evidence = [EvidenceItem.from_value(item) for item in self.evidence]
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "StageResultEnvelope":
+        artifact_content = payload.get("artifact_content", "")
+        artifact_path = str(payload.get("artifact_path", "") or "")
+        if not artifact_content and artifact_path:
+            path = Path(artifact_path)
+            if path.exists():
+                artifact_content = path.read_text()
+        supplemental_artifacts = dict(payload.get("supplemental_artifacts", {}))
+        if not supplemental_artifacts and isinstance(payload.get("supplemental_artifact_paths"), dict):
+            for name, raw_path in dict(payload.get("supplemental_artifact_paths", {})).items():
+                path = Path(str(raw_path))
+                if path.exists():
+                    supplemental_artifacts[str(name)] = path.read_text()
         return cls(
             session_id=payload.get("session_id", ""),
             stage=payload.get("stage", ""),
             status=payload.get("status", ""),
             artifact_name=payload.get("artifact_name", ""),
-            artifact_content=payload.get("artifact_content", ""),
+            artifact_content=artifact_content,
             contract_id=payload.get("contract_id", ""),
             journal=payload.get("journal", ""),
             findings=[Finding.from_dict(item) for item in payload.get("findings", [])],
@@ -356,26 +366,40 @@ class StageResultEnvelope:
             summary=payload.get("summary", ""),
             acceptance_status=payload.get("acceptance_status", ""),
             blocked_reason=payload.get("blocked_reason", ""),
-            supplemental_artifacts=dict(payload.get("supplemental_artifacts", {})),
+            supplemental_artifacts=supplemental_artifacts,
+            artifact_path=artifact_path,
         )
 
-    def to_dict(self) -> dict[str, Any]:
-        return {
+    def to_dict(
+        self,
+        *,
+        include_artifact_content: bool = True,
+        include_supplemental_artifacts: bool = True,
+    ) -> dict[str, Any]:
+        payload = {
             "session_id": self.session_id,
             "stage": self.stage,
             "status": self.status,
             "artifact_name": self.artifact_name,
-            "artifact_content": self.artifact_content,
             "contract_id": self.contract_id,
             "journal": self.journal,
             "findings": [finding.to_dict() for finding in self.findings],
             "evidence": [item.to_dict() for item in self.evidence],
-            "suggested_next_owner": self.suggested_next_owner,
             "summary": self.summary,
-            "acceptance_status": self.acceptance_status,
-            "blocked_reason": self.blocked_reason,
-            "supplemental_artifacts": dict(self.supplemental_artifacts),
         }
+        if self.suggested_next_owner:
+            payload["suggested_next_owner"] = self.suggested_next_owner
+        if self.acceptance_status:
+            payload["acceptance_status"] = self.acceptance_status
+        if self.blocked_reason:
+            payload["blocked_reason"] = self.blocked_reason
+        if include_supplemental_artifacts and self.supplemental_artifacts:
+            payload["supplemental_artifacts"] = dict(self.supplemental_artifacts)
+        if include_artifact_content:
+            payload["artifact_content"] = self.artifact_content
+        if self.artifact_path:
+            payload["artifact_path"] = self.artifact_path
+        return payload
 
 
 @model_dataclass
@@ -428,25 +452,32 @@ class StageRunRecord:
     gate_result: GateResult | None = None
     blocked_reason: str = ""
     artifact_paths: dict[str, str] = field(default_factory=dict)
+    stage_result: dict[str, Any] = field(default_factory=dict)
+    required_pass_steps: list[str] = field(default_factory=list)
+    steps: list[dict[str, Any]] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "StageRunRecord":
+        trace = payload.get("trace", {}) if isinstance(payload.get("trace"), dict) else {}
         return cls(
             run_id=payload.get("run_id", ""),
             session_id=payload.get("session_id", ""),
             stage=payload.get("stage", ""),
-            state=payload.get("state", ""),
+            state=payload.get("state", str(payload.get("status", "")).upper()),
             contract_id=payload.get("contract_id", ""),
             attempt=int(payload.get("attempt", 0)),
             required_outputs=list(payload.get("required_outputs", [])),
             required_evidence=list(payload.get("required_evidence", [])),
-            worker=payload.get("worker", ""),
-            created_at=payload.get("created_at", ""),
-            updated_at=payload.get("updated_at", ""),
+            worker=payload.get("worker", trace.get("worker", "")),
+            created_at=payload.get("created_at", trace.get("created_at", "")),
+            updated_at=payload.get("updated_at", trace.get("updated_at", "")),
             candidate_bundle_path=payload.get("candidate_bundle_path", ""),
-            gate_result=GateResult.from_dict(payload.get("gate_result")),
+            gate_result=GateResult.from_dict(payload.get("gate_result") or payload.get("gate")),
             blocked_reason=payload.get("blocked_reason", ""),
             artifact_paths=dict(payload.get("artifact_paths", {})),
+            stage_result=dict(payload.get("stage_result", {})),
+            required_pass_steps=list(payload.get("required_pass_steps", trace.get("required_pass_steps", []))),
+            steps=[dict(item) for item in payload.get("steps", trace.get("steps", []))],
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -466,6 +497,12 @@ class StageRunRecord:
             "blocked_reason": self.blocked_reason,
             "artifact_paths": dict(self.artifact_paths),
         }
+        if self.stage_result:
+            payload["stage_result"] = dict(self.stage_result)
+        if self.required_pass_steps:
+            payload["required_pass_steps"] = list(self.required_pass_steps)
+        if self.steps:
+            payload["steps"] = [dict(item) for item in self.steps]
         if self.gate_result is not None:
             payload["gate_result"] = self.gate_result.to_dict()
         return payload
@@ -488,8 +525,6 @@ class StageRecord:
     stage: str
     artifact_name: str
     artifact_path: Path
-    journal_path: Path
-    findings_path: Path
     acceptance_status: str | None = None
     round_index: int = 1
     archive_path: Path | None = None
@@ -500,8 +535,6 @@ class StageRecord:
             "stage": self.stage,
             "artifact_name": self.artifact_name,
             "artifact_path": str(self.artifact_path),
-            "journal_path": str(self.journal_path),
-            "findings_path": str(self.findings_path),
             "acceptance_status": self.acceptance_status,
             "round_index": self.round_index,
             "supplemental_artifact_paths": dict(self.supplemental_artifact_paths),

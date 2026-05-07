@@ -66,7 +66,13 @@ agent-team status --session-id <session_id>
 .agent-team/<session_id>/
 ```
 
-这里会同时放 `session.json`、`workflow_summary.md`、阶段产物、`review.md` 和 `events.jsonl`。
+这里只放人类要直接阅读的阶段产物，例如 `product-requirements.md`、`acceptance_plan.md`、`technical_plan.md`、`implementation.md`、`qa_report.md`、`acceptance_report.md` 和 `review.md`。
+
+机器状态、agent prompt、执行上下文、trace、stdout / stderr 等回溯材料放在：
+
+```text
+.agent-team/_runtime/sessions/<session_id>/
+```
 如果想一次性准备好状态目录和项目级文档结构，先运行 `agent-team init`。
 
 ### 4. 生成阶段 contract
@@ -201,7 +207,7 @@ agent-team review
 agent-team board-snapshot --all-workspaces
 ```
 
-启动本地只读看板：
+启动本地 React Console 的全工作区视图：
 
 ```bash
 agent-team serve-board --all-workspaces --port 8765 --poll-interval 5
@@ -215,13 +221,14 @@ agent-team serve-board --all-workspaces --port 8765 --poll-interval 5
   "stage": "Product",
   "contract_id": "<contract_id>",
   "status": "completed",
-  "artifact_name": "prd.md",
-  "artifact_content": "# PRD\n\n## Acceptance Criteria\n- ...\n",
+  "artifact_name": "product-requirements.md",
+  "artifact_content": "# PRD\n\n## Acceptance Plan\n- [Acceptance Plan](acceptance_plan.md)\n",
+  "acceptance_plan_content": "# Acceptance Plan\n\n## Requirements\n- [PRD](product-requirements.md)\n\n## Verification\n- ...",
   "evidence": [
     {
-      "name": "explicit_acceptance_criteria",
-      "kind": "report",
-      "summary": "PRD includes explicit acceptance criteria."
+      "name": "explicit_acceptance_plan",
+      "kind": "artifact",
+      "summary": "Acceptance plan describes verification method and evidence."
     }
   ]
 }
@@ -237,13 +244,13 @@ agent-team serve-board --all-workspaces --port 8765 --poll-interval 5
 agent-team board-snapshot --all-workspaces
 ```
 
-启动本地看板：
+启动本地 React Console 的全工作区视图：
 
 ```bash
 agent-team serve-board --all-workspaces --port 8765 --poll-interval 5
 ```
 
-看板按 `Project -> Worktree -> Session` 展示所有 workspace 的只读状态，每 5 秒轮询刷新。
+React Console 按 `Project -> Worktree -> Session` 展示所有 workspace 的只读状态，每 5 秒轮询刷新。
 
 ## 当前建议
 

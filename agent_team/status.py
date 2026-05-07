@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 from .models import WorkflowSummary
 
@@ -25,43 +24,6 @@ def build_status_overview(
     }
 
 
-def render_status_markdown(
-    *,
-    summary: WorkflowSummary,
-    state_root: Path,
-    events: list[dict[str, object]],
-    repo_root: Path | None = None,
-) -> str:
-    overview = build_status_overview(summary=summary, state_root=state_root, repo_root=repo_root)
-    lines = [
-        "# Agent Team Status",
-        "",
-        f"- project: {overview['project']}",
-        f"- role: {overview['role']}",
-        f"- status: {overview['status']}",
-        f"- detail: {overview['detail']}",
-        f"- session_id: {summary.session_id}",
-        f"- current_state: {summary.current_state}",
-        f"- acceptance_status: {summary.acceptance_status}",
-        f"- human_decision: {summary.human_decision}",
-        "",
-        "## Replay",
-        "",
-        "- workflow_summary: workflow_summary.md",
-        "- events: events.jsonl",
-        "",
-        "## Recent Events",
-        "",
-    ]
-    if events:
-        for event in events[-10:]:
-            lines.append(f"- {event.get('at', '')} {event.get('kind', '')}: {event.get('message', '')}")
-    else:
-        lines.append("- No events recorded yet.")
-    lines.append("")
-    return "\n".join(lines)
-
-
 def _project_name(*, state_root: Path, repo_root: Path | None) -> str:
     if repo_root is not None:
         return repo_root.resolve().name
@@ -75,7 +37,7 @@ def _status(summary: WorkflowSummary) -> str:
         return "blocked"
     if summary.current_state in {
         "WaitForCEOApproval",
-        "WaitForTechPlanApproval",
+        "WaitForTechnicalPlanApproval",
         "WaitForDevApproval",
         "WaitForQAApproval",
         "WaitForHumanDecision",
@@ -93,7 +55,7 @@ def _status_detail(summary: WorkflowSummary) -> str:
         return summary.blocked_reason
     if summary.current_state == "WaitForCEOApproval":
         return "Waiting for CEO approval."
-    if summary.current_state == "WaitForTechPlanApproval":
+    if summary.current_state == "WaitForTechnicalPlanApproval":
         return "Waiting for technical plan approval."
     if summary.current_state == "WaitForDevApproval":
         return "Waiting for Dev approval."

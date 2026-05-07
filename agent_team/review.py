@@ -39,8 +39,8 @@ def build_session_review(
                 lines.append(f"completion_signal: {finding.completion_signal}")
             if finding.proposed_context_update:
                 lines.append(f"proposed_context_update: {finding.proposed_context_update}")
-            if finding.proposed_skill_update:
-                lines.append(f"proposed_skill_update: {finding.proposed_skill_update}")
+            if finding.proposed_contract_update:
+                lines.append(f"proposed_contract_update: {finding.proposed_contract_update}")
             lines.append("")
     else:
         lines.append("- No downstream findings recorded.")

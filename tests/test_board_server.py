@@ -75,7 +75,7 @@ class BoardServerTests(unittest.TestCase):
             try:
                 base_url = f"http://127.0.0.1:{server.server_address[1]}"
                 safe_url = base_url + "/api/artifact?path=" + urllib.parse.quote(
-                    str(session.artifact_dir / "request.md")
+                    str(session.session_dir / "session.json")
                 )
                 safe_content = urllib.request.urlopen(safe_url, timeout=5).read().decode()
                 unsafe_url = base_url + "/api/artifact?path=" + urllib.parse.quote("/etc/passwd")
@@ -86,5 +86,5 @@ class BoardServerTests(unittest.TestCase):
                 server.server_close()
                 thread.join(timeout=5)
 
-            self.assertIn("Workflow Request", safe_content)
+            self.assertIn('"request": "serve board"', safe_content)
             self.assertEqual(error.exception.code, 403)

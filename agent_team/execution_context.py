@@ -10,6 +10,7 @@ from typing import Any
 from .judge_context import ArtifactRef
 from .models import AcceptanceContract, Finding, StageContract
 from .project_structure import detect_project_structure, resolve_role_context_paths
+from .stage_inputs import stage_allows_technical_plan_context, stage_context_artifact_paths
 from .state import StateStore
 
 MAX_EXECUTION_CONTEXT_TOKENS = 24_000
@@ -42,6 +43,7 @@ class StageExecutionContext:
     required_evidence: list[str]
     relevant_artifacts: list[ArtifactRef]
     approved_tech_plan_content: str = ""
+    approved_acceptance_plan_content: str = ""
     actionable_findings: list[Finding] = field(default_factory=list)
     repo_context_summary: str = ""
     role_context_digest: str = ""
@@ -57,6 +59,7 @@ class StageExecutionContext:
             "original_request_summary": self.original_request_summary,
             "approved_prd_summary": self.approved_prd_summary,
             "approved_tech_plan_content": self.approved_tech_plan_content,
+            "approved_acceptance_plan_content": self.approved_acceptance_plan_content,
             "acceptance_matrix": [dict(item) for item in self.acceptance_matrix],
             "constraints": list(self.constraints),
             "required_outputs": list(self.required_outputs),
@@ -82,19 +85,28 @@ def build_stage_execution_context(
     acceptance_contract = state_store.load_acceptance_contract(session_id)
     prd_path = _approved_prd_path(summary.artifact_paths)
     approved_prd = _read_text(prd_path)
+    acceptance_plan_path = _approved_acceptance_plan_path(summary.artifact_paths)
+    approved_acceptance_plan = _read_text(acceptance_plan_path)
     tech_plan_path = _approved_tech_plan_path(summary.artifact_paths)
     approved_tech_plan = _read_text(tech_plan_path)
     actionable_findings = _load_actionable_findings(session.session_dir / "session.json", stage)
     round_index = _next_context_round(state_store, session_id, stage)
-    artifact_refs = _artifact_refs(
-        {
-            "prd": prd_path,
-            "technical_plan": tech_plan_path,
-            **{key: Path(value) for key, value in summary.artifact_paths.items() if Path(value).exists()},
-        }
+    scoped_artifact_paths = stage_context_artifact_paths(
+        artifact_paths=summary.artifact_paths,
+        stage=stage,
     )
+    for key, path in (
+        ("prd", prd_path),
+        ("acceptance_plan", acceptance_plan_path),
+    ):
+        if path is not None:
+            scoped_artifact_paths.setdefault(key, path)
+    if stage_allows_technical_plan_context(stage) and tech_plan_path is not None:
+        scoped_artifact_paths.setdefault("technical_plan", tech_plan_path)
+    artifact_refs = _artifact_refs(scoped_artifact_paths)
     acceptance_matrix = _acceptance_matrix(
         contract=acceptance_contract,
+        acceptance_plan=approved_acceptance_plan,
         approved_prd=approved_prd,
     )
     role_context_digest = _digest_text(contract.role_context)
@@ -104,6 +116,7 @@ def build_stage_execution_context(
         round_index=round_index,
         contract_id=contract.contract_id,
         approved_prd=approved_prd,
+        approved_acceptance_plan=approved_acceptance_plan,
         approved_tech_plan=approved_tech_plan,
         findings=actionable_findings,
     )
@@ -116,7 +129,10 @@ def build_stage_execution_context(
         contract_id=contract.contract_id,
         original_request_summary=session.request,
         approved_prd_summary=_summarize(approved_prd),
-        approved_tech_plan_content=_summarize(approved_tech_plan),
+        approved_tech_plan_content=(
+            _summarize(approved_tech_plan) if stage_allows_technical_plan_context(stage) else ""
+        ),
+        approved_acceptance_plan_content=_summarize(approved_acceptance_plan),
         acceptance_matrix=acceptance_matrix,
         constraints=_constraints_from_contract(acceptance_contract),
         required_outputs=list(contract.required_outputs),
@@ -129,7 +145,15 @@ def build_stage_execution_context(
 
 
 def _approved_prd_path(artifact_paths: dict[str, str]) -> Path | None:
-    for key in ("product", "prd"):
+    for key in ("product", "product_requirements", "prd"):
+        value = artifact_paths.get(key)
+        if value and Path(value).exists():
+            return Path(value)
+    return None
+
+
+def _approved_acceptance_plan_path(artifact_paths: dict[str, str]) -> Path | None:
+    for key in ("acceptance_plan", "acceptance_plan.md", "acceptance"):
         value = artifact_paths.get(key)
         if value and Path(value).exists():
             return Path(value)
@@ -166,6 +190,9 @@ def _next_context_round(state_store: StateStore, session_id: str, stage: str) ->
     latest = state_store.latest_execution_context_path(session_id, stage)
     if latest is None:
         return 1
+    attempt_match = re.search(r"attempt-(\d+)", str(latest.parent))
+    if attempt_match:
+        return int(attempt_match.group(1)) + 1
     match = re.search(r"_round_(\d+)\.json$", latest.name)
     if not match:
         return 1
@@ -183,15 +210,21 @@ def _artifact_refs(paths: dict[str, Path | None]) -> list[ArtifactRef]:
         refs.append(
             ArtifactRef(
                 name=name,
-                summary=_summarize(content),
+                summary="",
                 sha256=hashlib.sha256(content.encode("utf-8")).hexdigest(),
                 content_chars=len(content),
+                artifact_path=str(path),
             )
         )
     return refs
 
 
-def _acceptance_matrix(*, contract: AcceptanceContract | None, approved_prd: str) -> list[dict[str, Any]]:
+def _acceptance_matrix(
+    *,
+    contract: AcceptanceContract | None,
+    acceptance_plan: str,
+    approved_prd: str,
+) -> list[dict[str, Any]]:
     if contract is not None and contract.acceptance_criteria:
         return [
             {
@@ -202,12 +235,16 @@ def _acceptance_matrix(*, contract: AcceptanceContract | None, approved_prd: str
             for index, criterion in enumerate(contract.acceptance_criteria, start=1)
         ]
 
-    criteria = _extract_prd_acceptance_criteria(approved_prd)
+    criteria = _extract_prd_acceptance_criteria(acceptance_plan)
+    source = "acceptance_plan"
+    if not criteria:
+        criteria = _extract_prd_acceptance_criteria(approved_prd)
+        source = "prd"
     return [
         {
             "id": f"AC-{index:03d}",
             "criterion": criterion,
-            "source": "prd",
+            "source": source,
         }
         for index, criterion in enumerate(criteria, start=1)
     ]
@@ -250,7 +287,7 @@ def _constraints_from_contract(contract: AcceptanceContract | None) -> list[str]
 def _repo_context_summary(*, repo_root: Path, stage: str) -> str:
     structure = detect_project_structure(repo_root)
     role_paths = resolve_role_context_paths(repo_root, stage)
-    files = [role_paths.context_path, role_paths.memory_path, role_paths.guidance_path]
+    files = [role_paths.context_path, role_paths.guidance_path]
     present = [str(path.relative_to(repo_root)) for path in files if path.exists()]
     details = []
     if structure.doc_map:
@@ -279,6 +316,7 @@ def _context_id(
     round_index: int,
     contract_id: str,
     approved_prd: str,
+    approved_acceptance_plan: str,
     approved_tech_plan: str,
     findings: list[Finding],
 ) -> str:
@@ -289,6 +327,9 @@ def _context_id(
             "round_index": round_index,
             "contract_id": contract_id,
             "approved_prd_sha256": hashlib.sha256(approved_prd.encode("utf-8")).hexdigest(),
+            "approved_acceptance_plan_sha256": hashlib.sha256(
+                approved_acceptance_plan.encode("utf-8")
+            ).hexdigest(),
             "approved_tech_plan_sha256": hashlib.sha256(approved_tech_plan.encode("utf-8")).hexdigest(),
             "findings": [finding.to_dict() for finding in findings],
         },

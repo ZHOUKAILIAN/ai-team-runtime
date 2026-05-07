@@ -13,3 +13,9 @@ Our collaboration tone is: **Geeky, Rigorous, Efficient, and Excellence-Driven**
 - **Rigorous**: Adhere to Clean Code principles; logical flaws are unacceptable.
 - **Efficient**: Direct communication without writing unnecessary "spaghetti code".
 
+## 3. 方法论许可
+
+- Use rigorous engineering discipline inside Dev.
+- Generic methodology skills are allowed inside Dev when they help implementation, debugging, testing, or self-verification.
+- Generic methodology skills must not replace QA, must not replace Acceptance, and must not change the Agent Team stage order or approval gates.
+- Treat self-verification as Dev evidence, not as a replacement for QA.

@@ -45,11 +45,11 @@ DOC_CANDIDATES = {
 
 ROLE_SLUGS = {
     "Product": "product",
-    "TechPlan": "techplan",
     "Dev": "dev",
     "QA": "qa",
     "Acceptance": "acceptance",
 }
+DEPRECATED_ROLE_SLUGS = ("techplan", "ops")
 
 
 @model_dataclass
@@ -57,7 +57,6 @@ class RoleContextPaths:
     role_name: str
     role_dir: Path
     context_path: Path
-    memory_path: Path
     guidance_path: Path
     source: str
 
@@ -121,14 +120,10 @@ def ensure_project_structure(repo_root: Path) -> ProjectStructure:
     structure = detect_project_structure(repo_root)
     structure.project_root.mkdir(parents=True, exist_ok=True)
 
-    if structure.used_default_docs:
-        for relative_path in DEFAULT_DOC_MAP.values():
-            (structure.repo_root / relative_path).mkdir(parents=True, exist_ok=True)
-        structure.doc_map = dict(DEFAULT_DOC_MAP)
-
     _write_doc_map(structure.doc_map_path, structure.doc_map)
     _ensure_text(structure.project_root / "context.md", "# Project Context\n\nDescribe the project-level context here.\n")
     _ensure_text(structure.project_root / "rules.md", "# Project Rules\n\nAdd project-level Agent Team rules here.\n")
+    _remove_deprecated_project_roles(structure.project_root / "roles")
     if structure.used_default_docs:
         roles_dir = structure.project_root / "roles"
         roles_dir.mkdir(parents=True, exist_ok=True)
@@ -138,12 +133,8 @@ def ensure_project_structure(repo_root: Path) -> ProjectStructure:
                 packaged_text("roles", role_name, "context.md"),
             )
             _ensure_text(
-                roles_dir / f"{slug}.memory.md",
-                packaged_text("roles", role_name, "memory.md"),
-            )
-            _ensure_text(
                 roles_dir / f"{slug}.contract.md",
-                packaged_text("roles", role_name, "SKILL.md"),
+                packaged_text("roles", role_name, "contract.md"),
             )
     return structure
 
@@ -158,7 +149,6 @@ def resolve_role_context_paths(repo_root: Path, role_name: str) -> RoleContextPa
             role_name=role_name,
             role_dir=agent_team_roles_dir,
             context_path=agent_team_context_path,
-            memory_path=agent_team_roles_dir / f"{slug}.memory.md",
             guidance_path=agent_team_roles_dir / f"{slug}.contract.md",
             source="agent-team-project",
         )
@@ -169,8 +159,7 @@ def resolve_role_context_paths(repo_root: Path, role_name: str) -> RoleContextPa
             role_name=role_name,
             role_dir=legacy_role_dir,
             context_path=legacy_role_dir / "context.md",
-            memory_path=legacy_role_dir / "memory.md",
-            guidance_path=legacy_role_dir / "SKILL.md",
+            guidance_path=legacy_role_dir / "contract.md",
             source="legacy-role-directory",
         )
 
@@ -179,8 +168,7 @@ def resolve_role_context_paths(repo_root: Path, role_name: str) -> RoleContextPa
         role_name=role_name,
         role_dir=packaged_role_dir,
         context_path=packaged_role_dir / "context.md",
-        memory_path=packaged_role_dir / "memory.md",
-        guidance_path=packaged_role_dir / "SKILL.md",
+        guidance_path=packaged_role_dir / "contract.md",
         source="packaged",
     )
 
@@ -207,3 +195,13 @@ def _ensure_text(path: Path, content: str) -> None:
         return
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content)
+
+
+def _remove_deprecated_project_roles(roles_dir: Path) -> None:
+    if not roles_dir.exists():
+        return
+    for slug in DEPRECATED_ROLE_SLUGS:
+        for suffix in ("context", "contract"):
+            path = roles_dir / f"{slug}.{suffix}.md"
+            if path.exists():
+                path.unlink()

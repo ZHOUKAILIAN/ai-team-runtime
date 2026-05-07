@@ -79,16 +79,16 @@ def record_learning_layers(*, learning_dir: Path, finding: Finding, recorded_at:
             ),
             finding.proposed_context_update,
         )
-    if finding.proposed_skill_update:
+    if finding.proposed_contract_update:
         _append_unique_section(
-            learning_dir / "extracted" / "skill_patch.md",
-            "Extracted Skill Patches",
+            learning_dir / "extracted" / "contract_patch.md",
+            "Extracted Contract Patches",
             (
                 f"## {recorded_at}\n"
-                f"Goal: {finding.proposed_skill_update}\n"
+                f"Goal: {finding.proposed_contract_update}\n"
                 f"Completion signal: {_completion_signal_for_finding(finding)}\n"
             ),
-            finding.proposed_skill_update,
+            finding.proposed_contract_update,
         )
 
     graph_path = learning_dir / "graph" / "relations.jsonl"

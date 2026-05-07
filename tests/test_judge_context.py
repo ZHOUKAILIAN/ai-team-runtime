@@ -13,7 +13,7 @@ class JudgeContextTests(unittest.TestCase):
             session_id="session-1",
             stage="Acceptance",
             contract_id="contract-acceptance",
-            input_artifacts={"prd": ".agent-team/session/prd.md"},
+            input_artifacts={"prd": ".agent-team/session/product-requirements.md"},
         )
         result = StageResultEnvelope(
             session_id="session-1",
