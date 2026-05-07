@@ -36,11 +36,29 @@ class ProjectStructureTests(unittest.TestCase):
             self.assertTrue((repo_root / "docs" / "requirements").exists())
             self.assertTrue((repo_root / "docs" / "designs").exists())
             self.assertTrue((repo_root / "agent-team" / "project" / "roles" / "product.context.md").exists())
-            self.assertTrue((repo_root / "agent-team" / "project" / "roles" / "techplan.context.md").exists())
-            self.assertTrue((repo_root / "agent-team" / "project" / "roles" / "techplan.contract.md").exists())
+            self.assertTrue((repo_root / "agent-team" / "project" / "roles" / "dev.context.md").exists())
+            self.assertTrue((repo_root / "agent-team" / "project" / "roles" / "dev.contract.md").exists())
+            self.assertFalse((repo_root / "agent-team" / "project" / "roles" / "techplan.context.md").exists())
             self.assertFalse((repo_root / "agent-team" / "project" / "roles" / "ops.context.md").exists())
             doc_map = json.loads((repo_root / "agent-team" / "project" / "doc-map.json").read_text())
             self.assertEqual(doc_map["requirements"], "docs/requirements")
+
+    def test_ensure_project_structure_removes_deprecated_project_roles(self) -> None:
+        from agent_team.project_structure import ensure_project_structure
+
+        with TemporaryDirectory(dir=local_temp_dir()) as temp_dir:
+            repo_root = Path(temp_dir)
+            roles_dir = repo_root / "agent-team" / "project" / "roles"
+            roles_dir.mkdir(parents=True)
+            (roles_dir / "techplan.context.md").write_text("# Legacy TechPlan\n")
+            (roles_dir / "techplan.contract.md").write_text("# Legacy TechPlan Contract\n")
+            (roles_dir / "ops.context.md").write_text("# Legacy Ops\n")
+
+            ensure_project_structure(repo_root)
+
+            self.assertFalse((roles_dir / "techplan.context.md").exists())
+            self.assertFalse((roles_dir / "techplan.contract.md").exists())
+            self.assertFalse((roles_dir / "ops.context.md").exists())
 
     def test_ensure_project_structure_does_not_shadow_existing_role_context(self) -> None:
         from agent_team.project_structure import ensure_project_structure, resolve_role_context_paths
@@ -89,7 +107,7 @@ class ProjectStructureTests(unittest.TestCase):
             roles = load_role_profiles(repo_root=repo_root, state_root=state_root, role_names=("QA",))
 
             self.assertIn("Project QA Context", roles["QA"].effective_context_text)
-            self.assertIn("Require independent evidence.", roles["QA"].effective_skill_text)
+            self.assertIn("Require independent evidence.", roles["QA"].effective_contract_text)
 
 
 if __name__ == "__main__":

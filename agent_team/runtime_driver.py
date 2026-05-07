@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -17,11 +18,13 @@ from .models import EvidenceItem, Finding, GateResult, StageContract, StageResul
 from .openai_sandbox_judge import OpenAISandboxJudge, OpenAISandboxJudgeUnavailable
 from .stage_contracts import build_stage_contract
 from .stage_machine import StageMachine
-from .stage_policies import default_policy_registry
+from .stage_payload import envelope_from_stage_payload
+from .stage_policies import default_policy_registry, dev_technical_plan_policy
 from .state import StageRunStateError, StateStore, artifact_name_for_stage
+from .skill_registry import Skill, skill_injection_text, skill_scope
 
 
-EXECUTABLE_STAGES = {"Product", "TechPlan", "Dev", "QA", "Acceptance"}
+EXECUTABLE_STATES = {"Product", "Dev", "QA", "Acceptance"}
 REQUIRED_PASS_TRACE_STEPS = [
     "contract_built",
     "execution_context_built",
@@ -39,9 +42,7 @@ class RuntimeDriverOptions:
     executor: str = "codex-exec"
     executor_command: str = ""
     command_timeout_seconds: int = 3600
-    auto_approve_product: bool = False
     auto_advance_intermediate: bool = False
-    auto_final_decision: str = ""
     max_stage_runs: int = 12
     judge: str = "off"
     model: str = "gpt-5.4"
@@ -55,12 +56,14 @@ class RuntimeDriverOptions:
     codex_sandbox: str = "workspace-write"
     codex_approval_policy: str = "never"
     codex_extra_args: list[str] = field(default_factory=list)
+    enabled_skills_by_stage: dict[str, list[Skill]] = field(default_factory=dict)
     codex_isolate_home: bool = True
     codex_ignore_rules: bool = True
     codex_disable_plugins: bool = True
     codex_ephemeral: bool = True
     codex_skip_git_repo_check: bool = True
     interactive: bool = False
+    trace_prompts: bool = False
 
 
 @dataclass(slots=True)
@@ -91,6 +94,11 @@ class StageExecutionRequest:
     context_path: Path
     result_path: Path
     output_schema_path: Path
+    prompt_path: Path | None = None
+    skill_asset_root: Path | None = None
+    stdout_path: Path | None = None
+    stderr_path: Path | None = None
+    skills: list[Skill] = field(default_factory=list)
 
 
 class RuntimeDriverError(RuntimeError):
@@ -106,10 +114,41 @@ class StageExecutor(Protocol):
 
 def _write_stage_run_streams(request: StageExecutionRequest, *, stdout: object, stderr: object) -> None:
     request.result_path.parent.mkdir(parents=True, exist_ok=True)
-    stdout_path = request.result_path.parent / f"{request.run_id}_stdout.txt"
-    stderr_path = request.result_path.parent / f"{request.run_id}_stderr.txt"
+    stdout_path = getattr(request, "stdout_path", None) or request.result_path.parent / f"{request.run_id}_stdout.txt"
+    stderr_path = getattr(request, "stderr_path", None) or request.result_path.parent / f"{request.run_id}_stderr.txt"
+    stdout_path.parent.mkdir(parents=True, exist_ok=True)
+    stderr_path.parent.mkdir(parents=True, exist_ok=True)
     stdout_path.write_text(_coerce_stream_text(stdout))
     stderr_path.write_text(_coerce_stream_text(stderr))
+
+
+def _skill_trace_entry(skill: Skill, skill_asset_root: Path, included_in_prompt: bool) -> dict[str, Any]:
+    installed_path = skill_asset_root / skill.name
+    return {
+        "name": skill.name,
+        "description": skill.description,
+        "source": skill.source,
+        "source_ref": skill.source_ref or str(skill.path.parent.resolve()),
+        "scope": skill_scope(skill.source),
+        "path": str(skill.path),
+        "stages": list(skill.stages),
+        "delivery": skill.delivery,
+        "included_in_prompt": included_in_prompt,
+        "installed_path": str(installed_path) if skill.delivery == "sandbox" else "",
+        "sandbox_files": list(skill.sandbox_files),
+        "env_vars": list(skill.env_vars),
+    }
+
+
+def _install_runtime_sandbox_skills(skills: list[Skill], skill_asset_root: Path) -> None:
+    for skill in skills:
+        if skill.delivery != "sandbox":
+            continue
+        destination = skill_asset_root / skill.name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if destination.exists():
+            shutil.rmtree(destination)
+        shutil.copytree(skill.path.parent, destination)
 
 
 def _coerce_stream_text(value: object) -> str:
@@ -147,9 +186,7 @@ def run_requirement(
             repo_root=repo_root,
             store=store,
             summary=summary,
-            auto_approve_product=opts.auto_approve_product,
             auto_advance_intermediate=opts.auto_advance_intermediate,
-            auto_final_decision=opts.auto_final_decision,
         )
         if waiting is not None:
             return _result_from_summary(
@@ -221,18 +258,19 @@ class DryRunStageExecutor:
 
     def execute(self, request: StageExecutionRequest) -> StageResultEnvelope:
         stage = request.contract.stage
-        artifact_name = artifact_name_for_stage(stage)
+        artifact_name = _contract_artifact_name(request.contract)
         return StageResultEnvelope(
             session_id=request.session_id,
             stage=stage,
             status="completed",
             artifact_name=artifact_name,
-            artifact_content=_dry_run_artifact_content(stage, request.context),
+            artifact_content=_dry_run_artifact_content(stage, request.context, artifact_name=artifact_name),
             contract_id=request.contract.contract_id,
             journal=f"Dry-run executor produced {artifact_name} for {stage}.",
-            evidence=_default_evidence(stage),
+            evidence=_default_evidence(stage, artifact_name=artifact_name),
             summary=f"{stage} dry-run result satisfied the stage contract.",
             acceptance_status="recommended_go" if stage == "Acceptance" else "",
+            supplemental_artifacts=_dry_run_supplemental_artifacts(stage, request.context),
         )
 
 
@@ -298,6 +336,9 @@ class CodexExecStageExecutor:
 
     def execute(self, request: StageExecutionRequest) -> StageResultEnvelope:
         prompt = _build_codex_prompt(request)
+        if request.prompt_path is not None:
+            request.prompt_path.parent.mkdir(parents=True, exist_ok=True)
+            request.prompt_path.write_text(prompt)
         command = [
             "codex",
             "exec",
@@ -398,7 +439,7 @@ def _create_driver_session(store: StateStore, message: str, *, interactive: bool
         raw_message=message,
         contract=intake.contract,
         runtime_mode="runtime_driver_interactive" if interactive else "runtime_driver",
-        initiator="human" if interactive else "agent",
+        initiator="human",
     )
 
 
@@ -415,22 +456,14 @@ def _handle_wait_state(
     repo_root: Path,
     store: StateStore,
     summary: WorkflowSummary,
-    auto_approve_product: bool,
     auto_advance_intermediate: bool,
-    auto_final_decision: str,
 ) -> tuple[str, str] | None:
     del repo_root
     if summary.current_state == "WaitForCEOApproval":
-        if auto_approve_product:
-            _apply_human_decision(store=store, summary=summary, decision="go")
-            return None
         if summary.runtime_mode == "runtime_driver_interactive":
             return ("waiting_human", "record-human-decision --decision go|rework|no-go")
         return ("waiting_human", "record-human-decision --decision go")
-    if summary.current_state == "WaitForTechPlanApproval":
-        if auto_advance_intermediate:
-            _apply_human_decision(store=store, summary=summary, decision="go")
-            return None
+    if summary.current_state == "WaitForTechnicalPlanApproval":
         return ("waiting_human", "record-human-decision --decision go|rework|no-go")
     if summary.current_state == "WaitForDevApproval":
         if auto_advance_intermediate:
@@ -443,9 +476,6 @@ def _handle_wait_state(
             return None
         return ("waiting_human", "record-human-decision --decision go|rework|no-go")
     if summary.current_state == "WaitForHumanDecision":
-        if auto_final_decision:
-            _apply_human_decision(store=store, summary=summary, decision=auto_final_decision)
-            return None
         return ("waiting_human", "record-human-decision --decision go|no-go|rework")
     if summary.current_state == "Blocked":
         return ("blocked", "inspect gate_reason and route rework")
@@ -511,16 +541,33 @@ def _execute_stage(
         required_evidence=list(contract.evidence_requirements),
         worker=executor.name,
     )
-    stage_runs_dir = session.session_dir / "stage_runs"
-    stage_runs_dir.mkdir(parents=True, exist_ok=True)
-    trace_path = stage_runs_dir / f"{run.run_id}_trace.json"
+    stage_result_path = store.stage_result_path(session, stage, run.attempt)
+    prompt_path = store.stage_prompt_bundle_path(session, stage, run.attempt) if options.trace_prompts else None
+    skill_asset_root = store.skill_asset_root(session, stage, run.attempt)
+    stage_skills = list(options.enabled_skills_by_stage.get(stage, []))
+    _install_runtime_sandbox_skills(stage_skills, skill_asset_root)
+    skill_trace = {
+        "skill_count": len(stage_skills),
+        "skill_asset_root": str(skill_asset_root),
+        "included_in_prompt": executor.name == "codex-exec",
+        "skills": [
+            _skill_trace_entry(skill, skill_asset_root, included_in_prompt=executor.name == "codex-exec")
+            for skill in stage_skills
+        ],
+    }
+    common_artifact_paths = {"stage_result": str(stage_result_path)}
+    run = store.update_stage_run(run, artifact_paths=common_artifact_paths)
     _add_runtime_trace_step(
         trace_steps,
         step="stage_run_acquired",
-        details={"run_id": run.run_id, "worker": executor.name},
+        details={
+            "run_id": run.run_id,
+            "worker": executor.name,
+            "skill_injection": skill_trace,
+        },
     )
     _write_runtime_trace(
-        trace_path=trace_path,
+        store=store,
         session_id=session_id,
         run_id=run.run_id,
         stage=stage,
@@ -533,13 +580,26 @@ def _execute_stage(
         run_id=run.run_id,
         contract=contract,
         context=context,
-        contract_path=stage_runs_dir / f"{run.run_id}_contract.json",
+        contract_path=store.stage_contract_path(session, stage, run.attempt),
         context_path=context_path,
-        result_path=stage_runs_dir / f"{run.run_id}_result.json",
-        output_schema_path=stage_runs_dir / f"{run.run_id}_schema.json",
+        result_path=stage_result_path,
+        output_schema_path=store.session_output_schema_path(session),
+        prompt_path=prompt_path,
+        skill_asset_root=skill_asset_root,
+        stdout_path=store.command_stdout_path(session, stage, run.attempt),
+        stderr_path=store.command_stderr_path(session, stage, run.attempt),
+        skills=stage_skills,
     )
+    request.contract_path.parent.mkdir(parents=True, exist_ok=True)
     request.contract_path.write_text(json.dumps(contract.to_dict(), ensure_ascii=False, indent=2))
-    request.output_schema_path.write_text(json.dumps(_stage_result_schema(), indent=2))
+    schema_path = request.output_schema_path
+    if not schema_path.exists():
+        schema_path.parent.mkdir(parents=True, exist_ok=True)
+        schema_path.write_text(json.dumps(_stage_result_schema(), indent=2))
+    prompt_text = _build_codex_prompt(request)
+    if request.prompt_path is not None:
+        request.prompt_path.parent.mkdir(parents=True, exist_ok=True)
+        request.prompt_path.write_text(prompt_text)
     store.record_event(
         session_id,
         kind="runtime_driver_stage_started",
@@ -553,7 +613,9 @@ def _execute_stage(
             "contract_path": str(request.contract_path),
             "context_path": str(request.context_path),
             "result_path": str(request.result_path),
-            "trace_path": str(trace_path),
+            "prompt_path": str(request.prompt_path),
+            "stage_result_path": str(stage_result_path),
+            "skill_count": len(stage_skills),
         },
     )
     _add_runtime_trace_step(
@@ -562,7 +624,7 @@ def _execute_stage(
         details={"executor": executor.name},
     )
     _write_runtime_trace(
-        trace_path=trace_path,
+        store=store,
         session_id=session_id,
         run_id=run.run_id,
         stage=stage,
@@ -576,7 +638,7 @@ def _execute_stage(
         details={"executor": executor.name, "result_status": result.status},
     )
     _write_runtime_trace(
-        trace_path=trace_path,
+        store=store,
         session_id=session_id,
         run_id=run.run_id,
         stage=stage,
@@ -604,7 +666,7 @@ def _execute_stage(
             details={"gate_status": failed_gate.status, "gate_reason": failed_gate.reason},
         )
         _write_runtime_trace(
-            trace_path=trace_path,
+            store=store,
             session_id=session_id,
             run_id=run.run_id,
             stage=stage,
@@ -617,16 +679,16 @@ def _execute_stage(
             state="BLOCKED",
             gate_result=failed_gate,
             blocked_reason=failed_gate.reason,
-            artifact_paths={"runtime_trace": str(trace_path)},
+            artifact_paths=common_artifact_paths,
         )
         return failed_gate
     _add_runtime_trace_step(
         trace_steps,
         step="result_submitted",
-        details={"candidate_bundle_path": submitted.candidate_bundle_path},
+        details={"stage_result_path": submitted.candidate_bundle_path},
     )
     _write_runtime_trace(
-        trace_path=trace_path,
+        store=store,
         session_id=session_id,
         run_id=run.run_id,
         stage=stage,
@@ -648,7 +710,7 @@ def _execute_stage(
         details={"gate_status": gate_result.status, "gate_reason": gate_result.reason},
     )
     _write_runtime_trace(
-        trace_path=trace_path,
+        store=store,
         session_id=session_id,
         run_id=run.run_id,
         stage=stage,
@@ -668,7 +730,7 @@ def _execute_stage(
             },
         )
         _write_runtime_trace(
-            trace_path=trace_path,
+            store=store,
             session_id=session_id,
             run_id=run.run_id,
             stage=stage,
@@ -681,10 +743,15 @@ def _execute_stage(
                 state="BLOCKED",
                 gate_result=trace_gate,
                 blocked_reason=trace_gate.reason,
-                artifact_paths={"runtime_trace": str(trace_path)},
+                artifact_paths=common_artifact_paths,
             )
             return trace_gate
-        updated_summary.artifact_paths[normalized_result.stage.lower()] = str(stage_record.artifact_path)
+        artifact_key = (
+            "technical_plan"
+            if normalized_result.stage == "Dev" and normalized_result.artifact_name == "technical_plan.md"
+            else normalized_result.stage.lower()
+        )
+        updated_summary.artifact_paths[artifact_key] = str(stage_record.artifact_path)
         updated_summary.artifact_paths.update(stage_record.supplemental_artifact_paths)
         store.save_workflow_summary(session, updated_summary)
         store.update_stage_run(
@@ -693,9 +760,9 @@ def _execute_stage(
             gate_result=gate_result,
             blocked_reason="",
             artifact_paths={
-                normalized_result.stage.lower(): str(stage_record.artifact_path),
+                artifact_key: str(stage_record.artifact_path),
                 **stage_record.supplemental_artifact_paths,
-                "runtime_trace": str(trace_path),
+                **common_artifact_paths,
             },
         )
         for finding in normalized_result.findings:
@@ -710,7 +777,7 @@ def _execute_stage(
         state=gate_result.status,
         gate_result=gate_result,
         blocked_reason=blocked_reason,
-        artifact_paths={"runtime_trace": str(trace_path)},
+        artifact_paths=common_artifact_paths,
     )
     return gate_result
 
@@ -749,7 +816,7 @@ def _evaluate_stage_result(
     try:
         evaluation = GateEvaluator(judge=judge).evaluate(
             session=store.load_session(result.session_id),
-            policy=default_policy_registry().get(result.stage),
+            policy=_policy_for_result(result),
             contract=contract,
             result=result,
             original_request_summary=store.load_session(result.session_id).request,
@@ -759,6 +826,12 @@ def _evaluate_stage_result(
     except OpenAISandboxJudgeUnavailable as exc:
         raise RuntimeDriverError(str(exc)) from exc
     return _gate_result_from_evaluation(evaluation), evaluation.result
+
+
+def _policy_for_result(result: StageResultEnvelope):
+    if result.stage == "Dev" and result.artifact_name == "technical_plan.md":
+        return dev_technical_plan_policy()
+    return default_policy_registry().get(result.stage)
 
 
 def _gate_result_from_evaluation(evaluation) -> GateResult:
@@ -780,9 +853,13 @@ def _gate_result_from_evaluation(evaluation) -> GateResult:
 
 
 def _approved_prd_summary(*, summary: WorkflowSummary, result: StageResultEnvelope) -> str:
-    if result.stage == "Product" and result.artifact_name == "prd.md":
+    if result.stage == "Product" and result.artifact_name in {artifact_name_for_stage("Product"), "prd.md"}:
         return result.artifact_content[:4000]
-    prd_path = summary.artifact_paths.get("product") or summary.artifact_paths.get("prd")
+    prd_path = (
+        summary.artifact_paths.get("product")
+        or summary.artifact_paths.get("product_requirements")
+        or summary.artifact_paths.get("prd")
+    )
     if prd_path and Path(prd_path).exists():
         return Path(prd_path).read_text()[:4000]
     return ""
@@ -791,7 +868,7 @@ def _approved_prd_summary(*, summary: WorkflowSummary, result: StageResultEnvelo
 def _expected_submission_stage(summary: WorkflowSummary) -> str | None:
     if summary.current_state in {"Intake", "ProductDraft"}:
         return "Product"
-    if summary.current_state in EXECUTABLE_STAGES:
+    if summary.current_state in EXECUTABLE_STATES:
         return summary.current_state
     return None
 
@@ -824,23 +901,28 @@ def _result_from_summary(
     )
 
 
-def _default_evidence(stage: str) -> list[EvidenceItem]:
-    return {
-        "Product": [
-            EvidenceItem(
-                name="explicit_acceptance_criteria",
-                kind="report",
-                summary="PRD includes explicit acceptance criteria.",
-                producer="runtime-driver",
-            )
-        ],
-        "TechPlan": [
+def _default_evidence(stage: str, *, artifact_name: str | None = None) -> list[EvidenceItem]:
+    if stage == "Dev" and artifact_name == "technical_plan.md":
+        return [
             EvidenceItem(
                 name="implementation_plan",
                 kind="report",
                 summary="Technical plan identifies implementation steps and verification commands.",
                 producer="runtime-driver",
             )
+        ]
+    return {
+        "Product": [
+            EvidenceItem(
+                name="explicit_acceptance_plan",
+                kind="artifact",
+                summary=(
+                    "Product produced a separate acceptance plan linked from the PRD, with verification data "
+                    "and evidence expectations."
+                ),
+                artifact_path="acceptance_plan.md",
+                producer="runtime-driver",
+            ),
         ],
         "Dev": [
             EvidenceItem(
@@ -879,13 +961,13 @@ def _default_evidence(stage: str) -> list[EvidenceItem]:
     }[stage]
 
 
-def _dry_run_artifact_content(stage: str, context: StageExecutionContext) -> str:
+def _dry_run_artifact_content(stage: str, context: StageExecutionContext, *, artifact_name: str | None = None) -> str:
     if stage == "Product":
         revision_summary = _human_revision_summary(context.actionable_findings)
         revision_section = (
             "\n## 人工修改意见\n"
             f"{revision_summary}\n"
-            "这些意见必须折入目标、用户场景和验收标准，而不是只作为备注保留。\n"
+            "这些意见必须折入目标、用户场景和验收方案，而不是只作为备注保留。\n"
             if revision_summary
             else ""
         )
@@ -896,17 +978,18 @@ def _dry_run_artifact_content(stage: str, context: StageExecutionContext) -> str
             "## 目标\n"
             "- 由 runtime driver 控制阶段执行，而不是依赖对话承诺。\n"
             "- Product、Dev、QA、Acceptance 的产物都通过阶段契约验证。\n\n"
-            "## 验收标准\n"
-            "- Product 阶段生成可确认的需求方案。\n"
-            "- 后续阶段必须基于已确认的需求方案继续推进。\n"
+            "## 验收文档\n"
+            "- [验收方案](acceptance_plan.md)\n\n"
+            "## 说明\n"
+            "- 本需求文档不展开验收标准；验证方法、数据准备和证据要求统一维护在验收方案中。\n"
         )
-    if stage == "TechPlan":
+    if stage == "Dev" and artifact_name == "technical_plan.md":
         return (
             "# 技术方案\n\n"
             "## 执行流程\n\n"
             "```mermaid\n"
             "flowchart TD\n"
-            "    A[读取已确认需求方案] --> B[识别最小变更范围]\n"
+            "    A[读取已确认需求方案和验收方案] --> B[识别最小变更范围]\n"
             "    B --> C[完成实现]\n"
             "    C --> D[运行验证命令]\n"
             "```\n\n"
@@ -947,8 +1030,32 @@ def _dry_run_artifact_content(stage: str, context: StageExecutionContext) -> str
     )
 
 
-def _stage_environment(request: StageExecutionRequest) -> dict[str, str]:
+def _dry_run_supplemental_artifacts(stage: str, context: StageExecutionContext) -> dict[str, str]:
+    if stage != "Product":
+        return {}
     return {
+        "acceptance_plan.md": (
+            "# 验收方案\n\n"
+            "## 需求文档\n"
+            "- [需求方案](product-requirements.md)\n\n"
+            f"## 验收对象\n{context.original_request_summary}\n\n"
+            "## 验收标准映射\n"
+            "- AC-001: Product 阶段生成可确认的需求方案。\n"
+            "- AC-002: Product 阶段生成独立的验收方案文档。\n"
+            "- AC-003: 后续阶段必须基于已确认的 PRD 和验收方案推进。\n\n"
+            "## 验证方法\n"
+            "- 优先验证真实用户路径，而不是只看单元测试。\n"
+            "- 服务端需求需要说明接口请求、测试数据、数据库和 Redis 等依赖的验证方式。\n"
+            "- 缺少环境、凭证、数据或依赖服务时，QA 或 Acceptance 必须标记 blocked 并说明缺口。\n\n"
+            "## 必需证据\n"
+            "- QA 需要记录独立执行的命令、请求或手工验证步骤。\n"
+            "- Acceptance 需要记录产品级验证结论以及无法验证的风险。\n"
+        )
+    }
+
+
+def _stage_environment(request: StageExecutionRequest) -> dict[str, str]:
+    env = {
         "AGENT_TEAM_REPO_ROOT": str(request.repo_root),
         "AGENT_TEAM_SESSION_ID": request.session_id,
         "AGENT_TEAM_STAGE": request.contract.stage,
@@ -959,6 +1066,20 @@ def _stage_environment(request: StageExecutionRequest) -> dict[str, str]:
         "AGENT_TEAM_OUTPUT_SCHEMA": str(request.output_schema_path),
         "AGENT_TEAM_ARTIFACT_DIR": str(request.state_store.load_session(request.session_id).artifact_dir),
     }
+    if request.prompt_path is not None:
+        env["AGENT_TEAM_PROMPT_PATH"] = str(request.prompt_path)
+    if request.skill_asset_root is not None:
+        env["AGENT_TEAM_SKILL_ASSET_ROOT"] = str(request.skill_asset_root)
+    if request.skills:
+        env["AGENT_TEAM_ENABLED_SKILLS"] = ",".join(skill.name for skill in request.skills)
+    return env
+
+
+def _contract_artifact_name(contract: StageContract) -> str:
+    required_outputs = list(getattr(contract, "required_outputs", []) or [])
+    if required_outputs:
+        return required_outputs[0]
+    return artifact_name_for_stage(contract.stage)
 
 
 def _blocked_result_from_process(
@@ -975,7 +1096,7 @@ def _blocked_result_from_process(
         session_id=request.session_id,
         stage=request.contract.stage,
         status="blocked",
-        artifact_name=artifact_name_for_stage(request.contract.stage),
+        artifact_name=_contract_artifact_name(request.contract),
         artifact_content=(
             f"# {request.contract.stage} Blocked\n\n"
             f"Command `{command}` exited with {exit_code} before producing a valid stage result.\n\n"
@@ -1001,21 +1122,24 @@ def _blocked_result_from_process(
 
 def _stage_result_from_json_text(*, request: StageExecutionRequest, value: str, source: str) -> StageResultEnvelope:
     try:
-        return StageResultEnvelope.from_dict(json.loads(value))
+        payload = json.loads(value)
+        if not isinstance(payload, dict):
+            raise TypeError("stage result payload must be a JSON object")
+        return _stage_result_from_payload_dict(request=request, payload=payload)
     except Exception as exc:
         return StageResultEnvelope(
             session_id=request.session_id,
             stage=request.contract.stage,
             status="blocked",
-            artifact_name=artifact_name_for_stage(request.contract.stage),
+            artifact_name=_contract_artifact_name(request.contract),
             artifact_content=(
                 f"# {request.contract.stage} Blocked\n\n"
-                f"Executor produced invalid StageResultEnvelope JSON from {source}.\n\n"
+                f"Executor produced invalid stage payload JSON from {source}.\n\n"
                 f"## Error\n\n```text\n{exc}\n```\n\n"
                 f"## Raw Output\n\n```text\n{value.strip()[:4000]}\n```\n"
             ),
             contract_id=request.contract.contract_id,
-            blocked_reason=f"Invalid StageResultEnvelope JSON from {source}: {exc}",
+            blocked_reason=f"Invalid stage payload JSON from {source}: {exc}",
             evidence=[
                 EvidenceItem(
                     name="executor_invalid_json",
@@ -1027,57 +1151,100 @@ def _stage_result_from_json_text(*, request: StageExecutionRequest, value: str, 
         )
 
 
-def _build_codex_prompt(request: StageExecutionRequest) -> str:
-    contract_json = json.dumps(request.contract.to_dict(), ensure_ascii=False, indent=2)
-    context_json = json.dumps(request.context.to_dict(), ensure_ascii=False, indent=2)
-    artifact_name = artifact_name_for_stage(request.contract.stage)
-    format_instructions = _stage_artifact_format_instructions(request.contract.stage)
-    human_revision_summary = _human_revision_summary(request.context.actionable_findings)
-    return (
-        f"You are the {request.contract.stage} stage worker inside the Agent Team runtime driver.\n"
-        "Execute exactly this stage. Do not call agent-team commands and do not advance workflow state.\n"
-        "The runtime driver will validate your JSON result against the stage contract after you return.\n\n"
-        "If human revision requests are present, treat them as authoritative updates for this rerun. "
-        "Apply them to the main artifact content and acceptance criteria instead of only mentioning them "
-        "in a revision note.\n\n"
-        "Human revision requests:\n"
-        f"{human_revision_summary or 'None'}\n\n"
-        "Return only a JSON object matching the provided output schema. The required identity fields are:\n"
-        f"- session_id: {request.session_id}\n"
-        f"- stage: {request.contract.stage}\n"
-        f"- contract_id: {request.contract.contract_id}\n"
-        f"- artifact_name: {artifact_name}\n\n"
-        "Use status `completed` for a completed stage, `failed` when QA finds defects, or `blocked` when evidence "
-        "cannot be produced. Include the required evidence item names from the contract.\n\n"
-        "For optional string fields use an empty string, for optional arrays use [], and for an evidence "
-        "exit_code that is not a command use null.\n\n"
-        "Artifact writing rules:\n"
-        f"{format_instructions}\n\n"
-        "StageContract:\n"
-        f"{contract_json}\n\n"
-        "StageExecutionContext:\n"
-        f"{context_json}\n"
+def _stage_result_from_payload_dict(
+    *,
+    request: StageExecutionRequest,
+    payload: dict[str, Any],
+) -> StageResultEnvelope:
+    return envelope_from_stage_payload(
+        payload=payload,
+        session_id=request.session_id,
+        stage=request.contract.stage,
+        contract_id=request.contract.contract_id,
+        artifact_name=_contract_artifact_name(request.contract),
     )
 
 
-def _stage_artifact_format_instructions(stage: str) -> str:
+def _build_codex_prompt(request: StageExecutionRequest) -> str:
+    contract_json = json.dumps(request.contract.to_dict(), ensure_ascii=False, indent=2)
+    context_json = json.dumps(request.context.to_dict(), ensure_ascii=False, indent=2)
+    format_instructions = _stage_artifact_format_instructions(
+        request.contract.stage,
+        required_outputs=request.contract.required_outputs,
+    )
+    human_revision_summary = _human_revision_summary(request.context.actionable_findings)
+    skill_text = skill_injection_text(
+        request.skills,
+        asset_root=str(request.skill_asset_root) if request.skill_asset_root is not None else ".agent-team/skills",
+    )
+    skill_section = f"{skill_text}\n\n" if skill_text else ""
+    return (
+        f"<agent_team_prompt stage=\"{request.contract.stage}\">\n"
+        "<role>\n"
+        f"You are the {request.contract.stage} stage worker inside the Agent Team runtime driver.\n"
+        "</role>\n\n"
+        "<instructions>\n"
+        "Execute exactly this stage. Do not call agent-team commands and do not advance workflow state.\n"
+        "The runtime driver will validate your JSON result against the stage contract after you return.\n"
+        "</instructions>\n\n"
+        f"{skill_section}"
+        "<human_revision_requests>\n"
+        "If human revision requests are present, treat them as authoritative updates for this rerun. "
+        "Apply them to the main artifact content and acceptance plan instead of only mentioning them "
+        "in a revision note.\n"
+        f"{_xml_cdata(human_revision_summary or 'None')}\n"
+        "</human_revision_requests>\n\n"
+        "<output_rules>\n"
+        "Return only a JSON object matching the provided output schema. Return only the stage payload; "
+        "the runtime driver will inject session_id, stage, contract_id, and artifact_name after you return.\n\n"
+        "Do not include workflow identity or control fields such as session_id, stage, contract_id, "
+        "artifact_name, current_state, or current_stage. Use status `completed` for a completed stage, "
+        "`failed` when the current stage finds defects, or `blocked` when evidence cannot be produced. Include the required "
+        "evidence item names from the contract.\n\n"
+        "For optional string fields use an empty string, for optional arrays use [], "
+        "and for an evidence exit_code that is not a command use null. Product must fill "
+        "acceptance_plan_content; other stages must set acceptance_plan_content to an empty string.\n"
+        "</output_rules>\n\n"
+        "<artifact_writing_rules>\n"
+        f"{_xml_cdata(format_instructions)}\n"
+        "</artifact_writing_rules>\n\n"
+        "<stage_contract>\n"
+        f"{_xml_cdata(contract_json)}\n"
+        "</stage_contract>\n\n"
+        "<stage_execution_context>\n"
+        f"{_xml_cdata(context_json)}\n"
+        "</stage_execution_context>\n"
+        "</agent_team_prompt>\n"
+    )
+
+
+def _stage_artifact_format_instructions(stage: str, *, required_outputs: list[str] | None = None) -> str:
+    required_outputs = required_outputs or []
     if stage == "Product":
         return (
             "- Write artifact_content primarily in Chinese unless the user explicitly asks for another language.\n"
-            "- Use clear Chinese headings such as `需求背景`, `目标`, `用户场景`, `验收标准`, "
-            "`QA 验证重点`, `验收重点`, `风险与假设`, and `确认问题`.\n"
-            "- Keep the PRD focused on requirements, verification, risks, assumptions, and confirmation questions.\n"
+            "- artifact_content is product-requirements.md. acceptance_plan_content is acceptance_plan.md.\n"
+            "- product-requirements.md must contain a clear Markdown link to `acceptance_plan.md` and must not "
+            "duplicate acceptance criteria or verification details.\n"
+            "- acceptance_plan.md must begin with a clear Markdown link back to `product-requirements.md`.\n"
+            "- Use clear Chinese PRD headings such as `需求背景`, `目标`, `用户场景`, `边界与假设`, "
+            "`验收文档`, and `确认问题`.\n"
+            "- Keep the PRD focused on requirements, scope, risks, assumptions, and confirmation questions.\n"
+            "- Keep acceptance_plan_content focused on how to verify the requirement, including "
+            "test data, API requests, database or Redis checks, external dependencies, and blocked conditions.\n"
             "- When human revision requests exist, fold them into the PRD's goals, user scenarios, "
-            "acceptance criteria, and risks instead of only quoting them in a revision section."
+            "risks, and acceptance plan instead of only quoting them in a revision section."
         )
-    if stage == "TechPlan":
+    if stage == "Dev" and "technical_plan.md" in required_outputs:
         return (
-            "- Write artifact_content primarily in Chinese unless the user explicitly asks for another language.\n"
+            "- You are Dev, but this pass is only the technical plan approval step.\n"
+            "- Write artifact_content as technical_plan.md, primarily in Chinese unless the user asks otherwise.\n"
+            "- Do not edit repository source code in this pass.\n"
             "- Prefer Mermaid flowcharts for execution flow and Markdown tables for scope, file changes, "
             "interfaces, verification, risks, and rollback plans.\n"
             "- Avoid bullet lists when the same information can be expressed as a flowchart or table.\n"
-            "- When human revision requests exist, update the concrete implementation scope, flowchart, "
-            "file plan, verification plan, and risks instead of only quoting them in a revision section."
+            "- Include implementation approach, affected files, data/API/database/Redis considerations, "
+            "verification plan mapped to acceptance_plan.md, risks, rollback, and questions for human approval."
         )
     if stage == "Dev":
         return (
@@ -1086,6 +1253,10 @@ def _stage_artifact_format_instructions(stage: str) -> str:
             "- If approved_tech_plan_content is empty, fall back to the approved PRD and stage contract."
         )
     return "- Write artifact_content in the most useful language for the current request and keep it concise."
+
+
+def _xml_cdata(value: str) -> str:
+    return "<![CDATA[" + value.replace("]]>", "]]]]><![CDATA[>") + "]]>"
 
 
 def _human_revision_summary(findings: list[Finding]) -> str:
@@ -1125,24 +1296,18 @@ def _add_runtime_trace_step(
 
 def _write_runtime_trace(
     *,
-    trace_path: Path,
+    store: StateStore,
     session_id: str,
     run_id: str,
     stage: str,
     trace_steps: list[dict[str, Any]],
 ) -> None:
-    trace_path.write_text(
-        json.dumps(
-            {
-                "session_id": session_id,
-                "run_id": run_id,
-                "stage": stage,
-                "required_pass_steps": list(REQUIRED_PASS_TRACE_STEPS),
-                "steps": trace_steps,
-            },
-            ensure_ascii=False,
-            indent=2,
-        )
+    del stage
+    store.update_stage_run_trace(
+        session_id=session_id,
+        run_id=run_id,
+        required_pass_steps=list(REQUIRED_PASS_TRACE_STEPS),
+        steps=trace_steps,
     )
 
 
@@ -1157,7 +1322,7 @@ def _validate_runtime_trace(
         return GateResult(
             status="BLOCKED",
             reason="Runtime trace is missing required step(s): " + ", ".join(missing_steps),
-            missing_evidence=["runtime_trace"],
+            missing_evidence=["stage_result"],
         )
 
     cursor = -1
@@ -1168,13 +1333,13 @@ def _validate_runtime_trace(
             return GateResult(
                 status="BLOCKED",
                 reason=f"Runtime trace is missing required step: {step}",
-                missing_evidence=["runtime_trace"],
+                missing_evidence=["stage_result"],
             )
         if index <= cursor:
             return GateResult(
                 status="BLOCKED",
                 reason=f"Runtime trace step is out of order: {step}",
-                missing_evidence=["runtime_trace"],
+                missing_evidence=["stage_result"],
             )
         cursor = index
 
@@ -1184,46 +1349,16 @@ def _validate_runtime_trace(
 def _stage_result_schema() -> dict[str, Any]:
     return {
         "type": "object",
-        "required": [
-            "session_id",
-            "stage",
-            "status",
-            "artifact_name",
-            "artifact_content",
-            "contract_id",
-            "journal",
-            "findings",
-            "evidence",
-            "suggested_next_owner",
-            "summary",
-            "acceptance_status",
-            "blocked_reason",
-        ],
+        "required": ["status", "artifact_content", "findings", "evidence", "summary"],
         "properties": {
-            "session_id": {"type": "string"},
-            "stage": {"enum": ["Product", "TechPlan", "Dev", "QA", "Acceptance"]},
             "status": {"enum": ["completed", "failed", "blocked"]},
-            "artifact_name": {"type": "string"},
             "artifact_content": {"type": "string"},
-            "contract_id": {"type": "string"},
             "journal": {"type": "string"},
             "findings": {
                 "type": "array",
                 "items": {
                     "type": "object",
-                    "required": [
-                        "source_stage",
-                        "target_stage",
-                        "issue",
-                        "severity",
-                        "lesson",
-                        "proposed_context_update",
-                        "proposed_skill_update",
-                        "evidence",
-                        "evidence_kind",
-                        "required_evidence",
-                        "completion_signal",
-                    ],
+                    "required": ["source_stage", "target_stage", "issue", "severity"],
                     "properties": {
                         "source_stage": {"type": "string"},
                         "target_stage": {"type": "string"},
@@ -1231,7 +1366,7 @@ def _stage_result_schema() -> dict[str, Any]:
                         "severity": {"type": "string"},
                         "lesson": {"type": "string"},
                         "proposed_context_update": {"type": "string"},
-                        "proposed_skill_update": {"type": "string"},
+                        "proposed_contract_update": {"type": "string"},
                         "evidence": {"type": "string"},
                         "evidence_kind": {"type": "string"},
                         "required_evidence": {"type": "array", "items": {"type": "string"}},
@@ -1244,15 +1379,7 @@ def _stage_result_schema() -> dict[str, Any]:
                 "type": "array",
                 "items": {
                     "type": "object",
-                    "required": [
-                        "name",
-                        "kind",
-                        "summary",
-                        "artifact_path",
-                        "command",
-                        "exit_code",
-                        "producer",
-                    ],
+                    "required": ["name", "kind", "summary"],
                     "properties": {
                         "name": {"type": "string"},
                         "kind": {"type": "string"},
@@ -1268,6 +1395,7 @@ def _stage_result_schema() -> dict[str, Any]:
             "suggested_next_owner": {"type": "string"},
             "summary": {"type": "string"},
             "acceptance_status": {"type": "string"},
+            "acceptance_plan_content": {"type": "string"},
             "blocked_reason": {"type": "string"},
         },
         "additionalProperties": False,

@@ -49,11 +49,11 @@ class ConsoleWebServerTests(unittest.TestCase):
             refresh_workspace_metadata(state_root=state_root, repo_root=repo_root)
             client = TestClient(create_console_app(codex_home=codex_home))
 
-            safe_response = client.get("/api/artifact", params={"path": str(session.artifact_dir / "request.md")})
+            safe_response = client.get("/api/artifact", params={"path": str(session.session_dir / "session.json")})
             unsafe_response = client.get("/api/artifact", params={"path": "/etc/passwd"})
 
             self.assertEqual(safe_response.status_code, 200)
-            self.assertIn("Workflow Request", safe_response.text)
+            self.assertIn('"request": "artifact safety"', safe_response.text)
             self.assertEqual(unsafe_response.status_code, 403)
 
     def test_console_websocket_sends_hello_message(self) -> None:

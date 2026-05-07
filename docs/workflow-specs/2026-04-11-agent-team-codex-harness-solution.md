@@ -90,7 +90,6 @@
 这一层提供：
 
 - `Product/`
-- `TechPlan/`
 - `Dev/`
 - `QA/`
 - `Acceptance/`

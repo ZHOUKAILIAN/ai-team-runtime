@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+- Simplified CLI from 21 commands to 9: removed `start-session`, `resume`, `current-stage`, `step`, `build-stage-contract`, `build-execution-context`, `acquire-stage-run`, `submit-stage-result`, `judge-stage-result`, `board-snapshot`, `serve-board`, `panel-snapshot`.
+- Merged `current-stage` + `step` → `status --verbose`; `panel-snapshot` → `panel --json`; `judge-stage-result` → `verify-stage-result --dry-run`.
+
+## [0.2.0b7] - 2026-05-04
+
+- Clarified packaged role skills so stage workers produce artifact content and the workflow runner persists session artifacts.
+
 ## [0.2.0b6] - 2026-05-03
 
 - Corrected README offline smoke-test examples to use the published `--executor dry-run` option.

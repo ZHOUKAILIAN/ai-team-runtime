@@ -98,6 +98,10 @@ class StaticBackend:
             journal=str(payload["journal"]),
             findings=stage_findings,
             acceptance_status=payload.get("acceptance_status"),
+            supplemental_artifacts={
+                str(name): str(content)
+                for name, content in dict(payload.get("supplemental_artifacts", {})).items()
+            },
         )
 
 
@@ -135,27 +139,24 @@ class DeterministicBackend:
             "## 目标\n"
             "- 将原始需求整理成可执行、可验收的工作项。\n"
             "- 让后续 QA 和 Acceptance 有明确可审计的检查依据。\n"
-            "- 在 Dev 开始前完成需求与验收标准确认。\n\n"
+            "- 在 Dev 开始前完成需求方案与独立验收方案确认。\n\n"
             "## 用户场景\n"
             "- 需求方提交需求后，可以看到结构化的需求方案。\n"
-            "- Dev 在实现前可以拿到明确的验收标准。\n"
-            "- QA 和 Acceptance 可以基于同一组标准独立验证。\n\n"
-            "## 验收标准\n"
-            "- Product 在 Dev 开始前产出包含明确验收标准的需求方案。\n"
-            "- Dev、QA、Acceptance 分别产出当前 session 范围内的阶段交接产物。\n"
-            "- QA 独立复跑关键验证并记录证据。\n"
-            "- Acceptance 给出 AI 建议后，继续等待人工 Go/No-Go 决策。\n\n"
+            "- Dev 在实现前可以拿到独立验收方案。\n"
+            "- QA 和 Acceptance 可以基于验收方案独立验证。\n\n"
+            "## 验收文档\n"
+            "- [验收方案](acceptance_plan.md)\n\n"
             "## QA 验证重点\n"
-            "- 检查验收标准是否可测量。\n"
+            "- 检查验收方案是否可执行、可复跑。\n"
             "- 确认 Dev 提供了足够具体、可复跑的验证证据。\n\n"
             "## 验收重点\n"
-            "- 按需求方案检查用户可见行为。\n"
+            "- 按验收方案检查用户可见行为。\n"
             "- 当产品级证据缺失时阻塞交付。\n\n"
             "## 风险与假设\n"
             "- 当前 deterministic backend 只演示产物结构，不代表真实仓库验证。\n"
             "- 人工确认节点仍需要在 demo backend 外部完成。\n\n"
             "## 确认问题\n"
-            "- 当前验收标准是否足够让 Dev 开始实现？\n"
+            "- 当前验收方案是否足够让 Dev 开始实现？\n"
             "- 是否还有实现前必须补充的约束？\n\n"
             "## Learned Guardrails\n"
             f"{guardrails}\n"
@@ -165,14 +166,27 @@ class DeterministicBackend:
             "## Effective Context Snapshot\n"
             f"{_excerpt(role.effective_context_text)}\n\n"
             "## Decisions\n"
-            "- Added explicit acceptance criteria for downstream review.\n"
+            "- Added an explicit acceptance-plan link for downstream review.\n"
             "- Preserved a learned-guardrail section so QA can trace expectations.\n"
+        )
+        acceptance_plan = (
+            "# 验收方案\n\n"
+            "## 需求文档\n"
+            "- [需求方案](product-requirements.md)\n\n"
+            "## 验收对象\n"
+            f"{request.strip()}\n\n"
+            "## 验证方法\n"
+            "- QA 独立复跑关键验证并记录证据。\n"
+            "- Acceptance 基于 QA 证据和产品级行为给出建议。\n\n"
+            "## 阻塞条件\n"
+            "- 缺少真实环境、凭证、数据或依赖服务时标记 blocked。\n"
         )
         return StageOutput(
             stage="Product",
             artifact_name=artifact_name_for_stage("Product"),
             artifact_content=artifact_content,
             journal=journal,
+            supplemental_artifacts={"acceptance_plan.md": acceptance_plan},
         )
 
     def _run_dev(
@@ -235,15 +249,15 @@ class DeterministicBackend:
         tech_spec = stage_artifacts.get("Dev", "")
         qa_findings: list[Finding] = []
 
-        if "Acceptance Criteria" not in prd:
+        if "acceptance_plan.md" not in prd:
             qa_findings.append(
                 Finding(
                     source_stage="QA",
                     target_stage="Product",
-                    issue="Product PRD is missing acceptance criteria.",
+                    issue="Product PRD is missing a link to acceptance_plan.md.",
                     severity="high",
-                    lesson="Always define acceptance criteria before handoff.",
-                    proposed_context_update="Product outputs must include measurable acceptance criteria.",
+                    lesson="Keep verification details in acceptance_plan.md and link to it from the PRD.",
+                    proposed_context_update="Product outputs must include a PRD link to acceptance_plan.md.",
                 )
             )
 
@@ -281,11 +295,11 @@ class DeterministicBackend:
             "- Demo runtime only: reviewed generated PRD and implementation artifact content.\n"
             "- Demo runtime only: no real repository commands were executed.\n\n"
             "## Observed Results\n"
-            "- Product artifact includes explicit acceptance criteria only if the generated PRD contains that section.\n"
+            "- Product artifact links to acceptance_plan.md only if the generated PRD contains that link.\n"
             "- Dev artifact is acceptable only if it documents a concrete verification strategy.\n\n"
             "## Failures Or Risks\n"
             f"{_format_findings(qa_findings)}\n\n"
-            "## PRD Acceptance Criteria Mapping\n"
+            "## Acceptance Plan Mapping\n"
             "- Artifact contract present: checked via generated session artifacts.\n"
             "- Independent verification evidence present: blocked in demo mode because no real rerun evidence exists.\n\n"
             f"## Decision\n{status}\n\n"
@@ -414,7 +428,7 @@ def _synthesize_acceptance_findings(
         if target_stage == "Product"
         else "Review user-visible behavior against the PRD before closing implementation."
     )
-    skill_update = (
+    contract_update = (
         "Produce measurable acceptance criteria and scenario coverage before handoff."
         if target_stage == "Product"
         else "Require product-level evidence for the user-visible behavior before reporting completion."
@@ -433,7 +447,7 @@ def _synthesize_acceptance_findings(
             severity="high",
             lesson=lesson,
             proposed_context_update=context_update,
-            proposed_skill_update=skill_update,
+            proposed_contract_update=contract_update,
             evidence=normalized,
             evidence_kind="acceptance_report",
             required_evidence=required_evidence,

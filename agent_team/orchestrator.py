@@ -51,8 +51,7 @@ class WorkflowOrchestrator:
             current_state="In Progress",
             current_stage="Intake",
             artifact_paths={
-                "request": str(session.artifact_dir / "request.md"),
-                "workflow_summary": str(session.artifact_dir / "workflow_summary.md"),
+                "workflow_summary": str(self.state_store.workflow_summary_path(session.session_id)),
                 **self.state_store.session_contract_artifact_paths(session),
             },
         )
@@ -199,8 +198,7 @@ class WorkflowOrchestrator:
             current_state="In Progress",
             current_stage="Intake",
             artifact_paths={
-                "request": str(session.artifact_dir / "request.md"),
-                "workflow_summary": str(session.artifact_dir / "workflow_summary.md"),
+                "workflow_summary": str(self.state_store.workflow_summary_path(session.session_id)),
                 **self.state_store.session_contract_artifact_paths(session),
             },
         )

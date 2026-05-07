@@ -50,8 +50,8 @@ class BoardSnapshotTests(unittest.TestCase):
                 session_id=session.session_id,
                 stage="Product",
                 contract_id="contract-product",
-                required_outputs=["prd.md"],
-                required_evidence=["explicit_acceptance_criteria"],
+                required_outputs=["product-requirements.md", "acceptance_plan.md"],
+                required_evidence=["explicit_acceptance_criteria", "explicit_acceptance_plan"],
                 worker="codex",
             )
             refresh_workspace_metadata(state_root=state_root, repo_root=repo_root)
@@ -60,10 +60,13 @@ class BoardSnapshotTests(unittest.TestCase):
             session_payload = snapshot["projects"][0]["worktrees"][0]["sessions"][0]
 
             self.assertEqual(session_payload["active_run"]["state"], "RUNNING")
-            self.assertEqual(session_payload["active_run"]["required_outputs"], ["prd.md"])
+            self.assertEqual(
+                session_payload["active_run"]["required_outputs"],
+                ["product-requirements.md", "acceptance_plan.md"],
+            )
             self.assertEqual(
                 session_payload["active_run"]["required_evidence"],
-                ["explicit_acceptance_criteria"],
+                ["explicit_acceptance_criteria", "explicit_acceptance_plan"],
             )
 
     def test_board_snapshot_falls_back_for_legacy_workspace_without_metadata(self) -> None:
@@ -90,11 +93,11 @@ class BoardSnapshotTests(unittest.TestCase):
             state_root = codex_home / "agent-team" / "workspaces" / "workspace-a"
             store = StateStore(state_root)
             session = store.create_session("artifact safety")
-            request_path = session.artifact_dir / "request.md"
+            session_path = session.session_dir / "session.json"
             snapshot = BoardSnapshot(
                 payload={"generated_at": "", "stats": {}, "projects": []},
                 state_roots=[state_root],
             )
 
-            self.assertTrue(is_allowed_artifact_path(request_path, snapshot.state_roots))
+            self.assertTrue(is_allowed_artifact_path(session_path, snapshot.state_roots))
             self.assertFalse(is_allowed_artifact_path(Path("/etc/passwd"), snapshot.state_roots))

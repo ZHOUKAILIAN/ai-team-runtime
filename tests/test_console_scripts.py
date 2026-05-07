@@ -51,8 +51,7 @@ class ConsoleScriptTests(unittest.TestCase):
             )
         self.assertEqual(agent_team_help.returncode, 0, agent_team_help.stderr)
         self.assertIn("run", agent_team_help.stdout)
-        self.assertIn("start-session", agent_team_help.stdout)
-        self.assertIn("current-stage", agent_team_help.stdout)
+        self.assertIn("status", agent_team_help.stdout)
 
     def test_built_wheel_installs_and_runs_help(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
@@ -95,8 +94,7 @@ class ConsoleScriptTests(unittest.TestCase):
 
         self.assertEqual(help_result.returncode, 0, help_result.stderr)
         self.assertIn("run", help_result.stdout)
-        self.assertIn("start-session", help_result.stdout)
-        self.assertIn("current-stage", help_result.stdout)
+        self.assertIn("status", help_result.stdout)
 
 
 if __name__ == "__main__":

@@ -18,12 +18,36 @@ from .models import (
     WorkflowSummary,
 )
 from .memory_layers import record_learning_layers
-from .status import render_status_markdown
-from .workflow_summary import render_workflow_summary
 
-VALID_ROLE_NAMES = {"Product", "TechPlan", "Dev", "QA", "Acceptance"}
+VALID_ROLE_NAMES = {"Product", "Dev", "QA", "Acceptance"}
 ACTIVE_STAGE_RUN_STATES = {"READY", "RUNNING", "SUBMITTED", "VERIFYING"}
 TERMINAL_STAGE_RUN_STATES = {"PASSED", "FAILED", "BLOCKED"}
+STAGE_SLUGS = {
+    "Product": "product",
+    "Dev": "dev",
+    "QA": "qa",
+    "Acceptance": "acceptance",
+    "Ops": "operations",
+}
+
+_LEGACY_SLUGS = {
+    "Dev": "development",
+    "QA": "quality-assurance",
+}
+
+
+def _resolve_stage_dir(session_dir: Path, stage: str) -> Path | None:
+    """Return the existing roles/{slug} dir for *stage*, trying the current slug first then legacy."""
+    slug = _stage_slug(stage)
+    candidate = session_dir / "roles" / slug
+    if candidate.exists():
+        return candidate
+    legacy = _LEGACY_SLUGS.get(stage, "")
+    if legacy:
+        legacy_candidate = session_dir / "roles" / legacy
+        if legacy_candidate.exists():
+            return legacy_candidate
+    return candidate
 
 
 class StageRunStateError(ValueError):
@@ -38,6 +62,7 @@ class StateStore:
         for directory in (
             self.root,
             self.root / "memory",
+            self.root / "_runtime" / "sessions",
         ):
             directory.mkdir(parents=True, exist_ok=True)
 
@@ -52,12 +77,11 @@ class StateStore:
     ) -> SessionRecord:
         self.ensure_layout()
         session_id = self._next_session_id(request)
-        session_dir = self.root / session_id
-        artifact_dir = session_dir
-        stages_dir = session_dir / "stages"
+        session_dir = self._runtime_session_dir(session_id)
+        artifact_dir = self._public_session_dir(session_id)
 
         session_dir.mkdir(parents=True, exist_ok=True)
-        stages_dir.mkdir(parents=True, exist_ok=True)
+        artifact_dir.mkdir(parents=True, exist_ok=True)
 
         session = SessionRecord(
             session_id=session_id,
@@ -69,20 +93,8 @@ class StateStore:
             initiator=initiator,
         )
         self._write_json(session_dir / "session.json", session.to_dict())
-        request_path = artifact_dir / "request.md"
-        if raw_message is None:
-            request_path.write_text(f"# Workflow Request\n\n{request.strip()}\n")
-        else:
-            request_path.write_text(
-                "# Workflow Request\n\n"
-                "## Normalized Request\n\n"
-                f"{request.strip()}\n\n"
-                "## Raw Intake Message\n\n"
-                f"{raw_message}\n"
-            )
         artifact_paths = {
-            "request": str(request_path),
-            "workflow_summary": str(session.artifact_dir / "workflow_summary.md"),
+            "workflow_summary": str(self.workflow_summary_path(session.session_id)),
         }
         artifact_paths.update(self._write_acceptance_contract_artifacts(session, contract))
         self.save_workflow_summary(
@@ -118,63 +130,43 @@ class StateStore:
         *,
         round_index: int = 1,
     ) -> StageRecord:
-        stage_slug = output.stage.lower()
-        stages_dir = session.session_dir / "stages"
         artifact_path = session.artifact_dir / output.artifact_name
-        archive_path = stages_dir / f"{stage_slug}_round_{round_index}_{output.artifact_name}"
-        journal_path = stages_dir / f"{stage_slug}_round_{round_index}_journal.md"
-        findings_path = stages_dir / f"{stage_slug}_round_{round_index}_findings.json"
-        metadata_path = stages_dir / f"{stage_slug}_round_{round_index}.json"
         supplemental_artifact_paths: dict[str, str] = {}
 
         artifact_path.write_text(output.artifact_content)
-        archive_path.write_text(output.artifact_content)
-        journal_path.write_text(output.journal)
-        self._write_json(findings_path, [finding.to_dict() for finding in output.findings])
         for artifact_name, artifact_content in output.supplemental_artifacts.items():
             safe_name = Path(artifact_name).name
             supplemental_path = session.artifact_dir / safe_name
-            supplemental_archive = stages_dir / f"{stage_slug}_round_{round_index}_{safe_name}"
             supplemental_path.write_text(artifact_content)
-            supplemental_archive.write_text(artifact_content)
             supplemental_artifact_paths[safe_name] = str(supplemental_path)
+            supplemental_artifact_paths[Path(safe_name).stem] = str(supplemental_path)
 
         stage_record = StageRecord(
             stage=output.stage,
             artifact_name=output.artifact_name,
             artifact_path=artifact_path,
-            journal_path=journal_path,
-            findings_path=findings_path,
             acceptance_status=output.acceptance_status,
             round_index=round_index,
-            archive_path=archive_path,
             supplemental_artifact_paths=supplemental_artifact_paths,
         )
-        self._write_json(metadata_path, stage_record.to_dict())
         return stage_record
 
     def save_review(self, session: SessionRecord, content: str) -> Path:
-        review_path = session.session_dir / "review.md"
+        review_path = session.artifact_dir / "review.md"
         review_path.write_text(content)
         return review_path
 
     def workflow_summary_path(self, session_id: str) -> Path:
-        return self.root / session_id / "workflow_summary.md"
+        return self._runtime_session_dir(session_id) / "workflow_summary.json"
 
     def save_workflow_summary(self, session: SessionRecord, summary: WorkflowSummary) -> Path:
         summary_path = self.workflow_summary_path(session.session_id)
-        rendered = render_workflow_summary(summary)
         summary_path.parent.mkdir(parents=True, exist_ok=True)
-        summary_path.write_text(rendered)
-        artifact_summary_path = session.artifact_dir / "workflow_summary.md"
-        if artifact_summary_path != summary_path:
-            artifact_summary_path.parent.mkdir(parents=True, exist_ok=True)
-            artifact_summary_path.write_text(rendered)
-        self._write_status_markdown(summary)
+        self._write_json(summary_path, summary.to_dict())
         return summary_path
 
     def load_session(self, session_id: str) -> SessionRecord:
-        session_path = self.root / session_id / "session.json"
+        session_path = self._session_json_path(session_id)
         if not session_path.exists():
             raise FileNotFoundError(f"Session not found: {session_id}")
         payload = json.loads(session_path.read_text())
@@ -191,43 +183,41 @@ class StateStore:
     def load_workflow_summary(self, session_id: str) -> WorkflowSummary:
         summary_path = self.workflow_summary_path(session_id)
         if not summary_path.exists():
-            session_path = self.root / session_id / "session.json"
+            session_path = self._legacy_session_dir(session_id) / "session.json"
             if session_path.exists():
                 payload = json.loads(session_path.read_text())
-                fallback_path = Path(payload.get("artifact_dir", "")) / "workflow_summary.md"
-                if fallback_path.exists():
-                    summary_path = fallback_path
+                artifact_paths = payload.get("artifact_paths", {})
+                summary_ref = artifact_paths.get("workflow_summary", "") if isinstance(artifact_paths, dict) else ""
+                fallback_candidates = []
+                if summary_ref:
+                    fallback_candidates.append(Path(str(summary_ref)))
+                if payload.get("artifact_dir"):
+                    fallback_candidates.append(Path(str(payload["artifact_dir"])) / "workflow_summary.json")
+                for fallback_path in fallback_candidates:
+                    if fallback_path.exists():
+                        summary_path = fallback_path
+                        break
             if not summary_path.exists():
                 raise FileNotFoundError(f"Workflow summary not found for session {session_id}.")
 
-        payload: dict[str, str] = {}
-        artifact_paths: dict[str, str] = {}
-        in_artifacts = False
-        for raw_line in summary_path.read_text().splitlines():
-            if raw_line.strip() == "## Artifact Paths":
-                in_artifacts = True
-                continue
-            if not raw_line.startswith("- "):
-                continue
-            key, _, value = raw_line[2:].partition(": ")
-            if in_artifacts:
-                artifact_paths[key] = value
-            else:
-                payload[key] = value
+        return self._workflow_summary_from_dict(json.loads(summary_path.read_text()), session_id=session_id)
 
+    def _workflow_summary_from_dict(self, payload: dict[str, object], *, session_id: str) -> WorkflowSummary:
+        artifact_paths_value = payload.get("artifact_paths", {})
+        artifact_paths = artifact_paths_value if isinstance(artifact_paths_value, dict) else {}
         return WorkflowSummary(
-            session_id=payload.get("session_id", session_id),
-            runtime_mode=payload.get("runtime_mode", "session_bootstrap"),
-            current_state=payload.get("current_state", "Intake"),
-            current_stage=payload.get("current_stage", "Intake"),
-            prd_status=payload.get("prd_status", "pending"),
-            dev_status=payload.get("dev_status", "pending"),
-            qa_status=payload.get("qa_status", "pending"),
-            acceptance_status=payload.get("acceptance_status", "pending"),
-            human_decision=payload.get("human_decision", "pending"),
-            qa_round=int(payload.get("qa_round", "0") or 0),
-            blocked_reason=payload.get("blocked_reason", ""),
-            artifact_paths=artifact_paths,
+            session_id=str(payload.get("session_id", session_id)),
+            runtime_mode=str(payload.get("runtime_mode", "session_bootstrap")),
+            current_state=str(payload.get("current_state", "Intake")),
+            current_stage=str(payload.get("current_stage", "Intake")),
+            prd_status=str(payload.get("prd_status", "pending")),
+            dev_status=str(payload.get("dev_status", "pending")),
+            qa_status=str(payload.get("qa_status", "pending")),
+            acceptance_status=str(payload.get("acceptance_status", "pending")),
+            human_decision=str(payload.get("human_decision", "pending")),
+            qa_round=int(payload.get("qa_round", 0) or 0),
+            blocked_reason=str(payload.get("blocked_reason", "")),
+            artifact_paths={str(key): str(value) for key, value in artifact_paths.items()},
         )
 
     def load_acceptance_contract(self, session_id: str) -> AcceptanceContract | None:
@@ -277,6 +267,22 @@ class StateStore:
         )
         return stage_record
 
+    def _cleanup_incomplete_attempts(self, session: SessionRecord, stage: str) -> None:
+        """Remove stale attempt dirs that have no stage-results (incomplete execution)."""
+        roles_dir = session.session_dir / "roles"
+        if not roles_dir.exists():
+            return
+        stage_dir = _resolve_stage_dir(session.session_dir, stage)
+        if stage_dir is None or not stage_dir.exists():
+            return
+        for attempt_dir in sorted(stage_dir.glob("attempt-*")):
+            if not attempt_dir.is_dir():
+                continue
+            stage_results = attempt_dir / "stage-results"
+            if not stage_results.exists() or not list(stage_results.glob("*")):
+                import shutil
+                shutil.rmtree(attempt_dir, ignore_errors=True)
+
     def create_stage_run(
         self,
         *,
@@ -294,6 +300,7 @@ class StateStore:
                 f"Active stage run already exists for {stage}: {active.run_id} ({active.state})."
             )
 
+        self._cleanup_incomplete_attempts(session, stage)
         attempt = 1 + sum(1 for item in self.stage_runs(session_id) if item.stage == stage)
         timestamp = self._timestamp()
         run = StageRunRecord(
@@ -330,8 +337,28 @@ class StateStore:
             )
 
         session = self.load_session(run.session_id)
-        candidate_path = self._stage_runs_dir(session) / f"{run.run_id}_candidate.json"
-        self._write_json(candidate_path, result.to_dict())
+        candidate_artifact_path = self.stage_output_archive_path(
+            session,
+            run.stage,
+            run.attempt,
+            result.artifact_name,
+        )
+        candidate_artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        candidate_artifact_path.write_text(result.artifact_content)
+        supplemental_archive_dir = candidate_artifact_path.parent / "supplemental-artifacts"
+        supplemental_artifact_paths: dict[str, str] = {}
+        for artifact_name, artifact_content in result.supplemental_artifacts.items():
+            safe_name = Path(artifact_name).name
+            supplemental_archive = supplemental_archive_dir / safe_name
+            supplemental_archive.parent.mkdir(parents=True, exist_ok=True)
+            supplemental_archive.write_text(artifact_content)
+            supplemental_artifact_paths[safe_name] = str(supplemental_archive)
+            supplemental_artifact_paths[Path(safe_name).stem] = str(supplemental_archive)
+        stage_result = result.to_dict(include_artifact_content=False, include_supplemental_artifacts=False)
+        stage_result["artifact_path"] = str(candidate_artifact_path)
+        if supplemental_artifact_paths:
+            stage_result["supplemental_artifact_paths"] = supplemental_artifact_paths
+        stage_result_path = self.stage_result_path(session, run.stage, run.attempt)
         updated = StageRunRecord(
             run_id=run.run_id,
             session_id=run.session_id,
@@ -344,20 +371,32 @@ class StateStore:
             worker=run.worker,
             created_at=run.created_at,
             updated_at=self._timestamp(),
-            candidate_bundle_path=str(candidate_path),
+            candidate_bundle_path=str(stage_result_path),
             gate_result=run.gate_result,
             blocked_reason=run.blocked_reason,
             artifact_paths=dict(run.artifact_paths),
+            stage_result=stage_result,
+            required_pass_steps=list(run.required_pass_steps),
+            steps=[dict(item) for item in run.steps],
         )
         self._save_stage_run(session, updated)
         return updated
 
+    def load_stage_run_result(self, run: StageRunRecord) -> StageResultEnvelope:
+        if run.stage_result:
+            return StageResultEnvelope.from_dict(run.stage_result)
+        if not run.candidate_bundle_path:
+            raise FileNotFoundError(f"Stage run {run.run_id} has no submitted candidate result.")
+        payload = json.loads(Path(run.candidate_bundle_path).read_text())
+        if isinstance(payload.get("stage_result"), dict):
+            payload = payload["stage_result"]
+        return StageResultEnvelope.from_dict(payload)
+
     def _load_stage_run_for_session(self, session_id: str, run_id: str) -> StageRunRecord:
-        session = self.load_session(session_id)
-        path = self._stage_runs_dir(session) / f"{run_id}.json"
-        if not path.exists():
-            raise FileNotFoundError(f"Stage run not found for session {session_id}: {run_id}")
-        return StageRunRecord.from_dict(json.loads(path.read_text()))
+        for run in self.stage_runs(session_id):
+            if run.run_id == run_id:
+                return run
+        raise FileNotFoundError(f"Stage run not found for session {session_id}: {run_id}")
 
     def update_stage_run(
         self,
@@ -367,27 +406,54 @@ class StateStore:
         gate_result: GateResult | None = None,
         blocked_reason: str | None = None,
         artifact_paths: dict[str, str] | None = None,
+        stage_result: dict[str, object] | None = None,
+        required_pass_steps: list[str] | None = None,
+        steps: list[dict[str, object]] | None = None,
     ) -> StageRunRecord:
         session = self.load_session(run.session_id)
+        try:
+            base = self._load_stage_run_for_session(run.session_id, run.run_id)
+        except FileNotFoundError:
+            base = run
         updated = StageRunRecord(
-            run_id=run.run_id,
-            session_id=run.session_id,
-            stage=run.stage,
-            state=state or run.state,
-            contract_id=run.contract_id,
-            attempt=run.attempt,
-            required_outputs=list(run.required_outputs),
-            required_evidence=list(run.required_evidence),
-            worker=run.worker,
-            created_at=run.created_at,
+            run_id=base.run_id,
+            session_id=base.session_id,
+            stage=base.stage,
+            state=state or base.state,
+            contract_id=base.contract_id,
+            attempt=base.attempt,
+            required_outputs=list(base.required_outputs),
+            required_evidence=list(base.required_evidence),
+            worker=base.worker,
+            created_at=base.created_at,
             updated_at=self._timestamp(),
-            candidate_bundle_path=run.candidate_bundle_path,
-            gate_result=gate_result if gate_result is not None else run.gate_result,
-            blocked_reason=blocked_reason if blocked_reason is not None else run.blocked_reason,
-            artifact_paths=artifact_paths if artifact_paths is not None else dict(run.artifact_paths),
+            candidate_bundle_path=base.candidate_bundle_path,
+            gate_result=gate_result if gate_result is not None else base.gate_result,
+            blocked_reason=blocked_reason if blocked_reason is not None else base.blocked_reason,
+            artifact_paths=artifact_paths if artifact_paths is not None else dict(base.artifact_paths),
+            stage_result=dict(stage_result) if stage_result is not None else dict(base.stage_result),
+            required_pass_steps=(
+                list(required_pass_steps) if required_pass_steps is not None else list(base.required_pass_steps)
+            ),
+            steps=[dict(item) for item in steps] if steps is not None else [dict(item) for item in base.steps],
         )
         self._save_stage_run(session, updated)
         return updated
+
+    def update_stage_run_trace(
+        self,
+        *,
+        session_id: str,
+        run_id: str,
+        required_pass_steps: list[str],
+        steps: list[dict[str, object]],
+    ) -> StageRunRecord:
+        current = self._load_stage_run_for_session(session_id, run_id)
+        return self.update_stage_run(
+            current,
+            required_pass_steps=list(required_pass_steps),
+            steps=[dict(item) for item in steps],
+        )
 
     def active_stage_run(self, session_id: str, stage: str | None = None) -> StageRunRecord | None:
         active_runs = [
@@ -402,34 +468,28 @@ class StateStore:
         return runs[-1] if runs else None
 
     def load_stage_run(self, run_id: str) -> StageRunRecord:
-        session_dirs = list((self.root / "sessions").glob("*")) + [
+        session_dirs = list((self.root / "_runtime" / "sessions").glob("*")) + list((self.root / "sessions").glob("*")) + [
             path
             for path in self.root.glob("*")
             if path.is_dir() and (path / "session.json").exists()
         ]
         for session_dir in sorted(session_dirs):
-            path = session_dir / "stage_runs" / f"{run_id}.json"
-            if path.exists():
-                return StageRunRecord.from_dict(json.loads(path.read_text()))
+            for run in self._stage_run_records(session_dir):
+                if run.run_id == run_id:
+                    return run
         raise FileNotFoundError(f"Stage run not found: {run_id}")
 
     def stage_runs(self, session_id: str) -> list[StageRunRecord]:
         session = self.load_session(session_id)
-        runs_dir = self._stage_runs_dir(session)
-        if not runs_dir.exists():
-            return []
-        records = [
-            StageRunRecord.from_dict(json.loads(path.read_text()))
-            for path in sorted(runs_dir.glob("*.json"))
-            if not path.name.endswith("_candidate.json")
-        ]
+        records = self._stage_run_records(session.session_dir)
         return sorted(records, key=lambda run: (run.created_at, run.run_id))
 
     def save_execution_context(self, context) -> Path:
         session = self.load_session(context.session_id)
-        context_dir = session.session_dir / "execution_context"
+        context_dir = self._stage_attempt_dir(session, context.stage, context.round_index, "execution-contexts")
         context_dir.mkdir(parents=True, exist_ok=True)
-        path = context_dir / f"{context.stage.lower()}_round_{context.round_index}.json"
+        stage_slug = _stage_slug(context.stage)
+        path = context_dir / f"{stage_slug}-input-context.json"
         self._write_json(path, context.to_dict())
         self.record_event(
             context.session_id,
@@ -449,15 +509,30 @@ class StateStore:
 
     def latest_execution_context_path(self, session_id: str, stage: str) -> Path | None:
         session = self.load_session(session_id)
-        context_dir = session.session_dir / "execution_context"
-        if not context_dir.exists():
-            return None
-        prefix = f"{stage.lower()}_round_"
-        candidates = [
+        stage_slug = _stage_slug(stage)
+        candidates: list[Path] = []
+        for slug_candidate in {stage_slug, _LEGACY_SLUGS.get(stage, "")}:
+            if not slug_candidate:
+                continue
+            context_root = session.session_dir / "roles" / slug_candidate
+            if context_root.exists():
+                candidates.extend(
+                    path
+                    for path in context_root.glob("attempt-*/execution-contexts/*-input-context.json")
+                )
+        legacy_context_root = session.session_dir / "execution-contexts" / stage_slug
+        candidates.extend(
             path
-            for path in context_dir.glob(f"{prefix}*.json")
-            if path.name.startswith(prefix)
-        ]
+            for path in legacy_context_root.glob("attempt-*/*-input-context.json")
+        )
+        legacy_context_dir = session.session_dir / "execution_context"
+        prefix = f"{stage.lower()}_round_"
+        if legacy_context_dir.exists():
+            candidates.extend(
+                path
+                for path in legacy_context_dir.glob(f"{prefix}*.json")
+                if path.name.startswith(prefix)
+            )
         if not candidates:
             return None
         return sorted(candidates, key=lambda path: (_round_index_from_context_path(path), path.name))[-1]
@@ -530,7 +605,7 @@ class StateStore:
         self._write_json(session_path, payload)
 
     def record_feedback(self, session_id: str, finding: Finding) -> Path:
-        session_dir = self.root / session_id
+        session_dir = self.load_session(session_id).session_dir
         session_path = session_dir / "session.json"
         if not session_path.exists():
             raise FileNotFoundError(f"Session not found: {session_id}")
@@ -546,7 +621,7 @@ class StateStore:
             created_at=recorded_at,
             lesson=finding.lesson,
             proposed_context_update=finding.proposed_context_update,
-            proposed_skill_update=finding.proposed_skill_update,
+            proposed_contract_update=finding.proposed_contract_update,
             evidence=finding.evidence,
             evidence_kind=finding.evidence_kind,
             required_evidence=list(finding.required_evidence),
@@ -615,16 +690,16 @@ class StateStore:
                 finding.proposed_context_update,
             )
 
-        if finding.proposed_skill_update:
+        if finding.proposed_contract_update:
             self._append_unique_section(
-                learning_dir / "skill_patch.md",
-                "Skill Patches",
+                learning_dir / "contract_patch.md",
+                "Contract Patches",
                 (
                     f"## {recorded_at}\n"
-                    f"Goal: {finding.proposed_skill_update}\n"
+                    f"Goal: {finding.proposed_contract_update}\n"
                     f"Completion signal: {_completion_signal_for_finding(finding)}\n"
                 ),
-                finding.proposed_skill_update,
+                finding.proposed_contract_update,
             )
 
         findings_log = learning_dir / "findings.jsonl"
@@ -632,31 +707,45 @@ class StateStore:
             handle.write(json.dumps({"applied_at": recorded_at, **finding.to_dict()}) + "\n")
 
     def latest_session_id(self) -> str | None:
-        if not self.root.exists():
-            return None
-
-        candidates = sorted(
-            path.name
-            for path in self.root.iterdir()
-            if path.is_dir() and (path / "session.json").exists()
-        )
+        candidates = self.session_ids()
         return candidates[-1] if candidates else None
+
+    def session_ids(self) -> list[str]:
+        if not self.root.exists():
+            return []
+
+        candidates: set[str] = set()
+        session_roots = (
+            self.root / "_runtime" / "sessions",
+            self.root / "sessions",
+            self.root,
+        )
+        for session_root in session_roots:
+            if not session_root.exists():
+                continue
+            for path in session_root.iterdir():
+                if path.is_dir() and (path / "session.json").exists():
+                    candidates.add(self._session_id_from_session_dir(path))
+        return sorted(candidates)
 
     def read_review(self, session_id: str | None = None) -> str:
         target_session = session_id or self.latest_session_id()
         if not target_session:
             raise FileNotFoundError("No workflow session exists yet.")
 
-        review_path = self.root / target_session / "review.md"
+        session = self.load_session(target_session)
+        review_path = session.artifact_dir / "review.md"
+        if not review_path.exists():
+            review_path = session.session_dir / "review.md"
         if not review_path.exists():
             raise FileNotFoundError(f"Review not found for session {target_session}.")
         return review_path.read_text()
 
     def session_events_path(self, session_id: str) -> Path:
-        return self.root / session_id / "events.jsonl"
-
-    def status_path(self, session_id: str) -> Path:
-        return self.root / session_id / "status.md"
+        runtime_events_path = self._runtime_session_dir(session_id) / "events.jsonl"
+        if runtime_events_path.exists() or not (self._legacy_session_dir(session_id) / "events.jsonl").exists():
+            return runtime_events_path
+        return self._legacy_session_dir(session_id) / "events.jsonl"
 
     def record_event(
         self,
@@ -685,11 +774,6 @@ class StateStore:
         events_path.parent.mkdir(parents=True, exist_ok=True)
         with events_path.open("a") as handle:
             handle.write(json.dumps(event) + "\n")
-        try:
-            summary = self.load_workflow_summary(session_id)
-        except FileNotFoundError:
-            return event
-        self._write_status_markdown(summary)
         return event
 
     def read_session_events(self, session_id: str) -> list[dict[str, object]]:
@@ -698,17 +782,156 @@ class StateStore:
             return []
         return [json.loads(line) for line in events_path.read_text().splitlines() if line.strip()]
 
-    def _write_status_markdown(self, summary: WorkflowSummary) -> Path:
-        status_path = self.status_path(summary.session_id)
-        status_path.parent.mkdir(parents=True, exist_ok=True)
-        status_path.write_text(
-            render_status_markdown(
-                summary=summary,
-                state_root=self.root,
-                events=self.read_session_events(summary.session_id),
-            )
+    def stage_attempt_dir(self, session_id: str, stage: str, attempt: int, category: str) -> Path:
+        return self._stage_attempt_dir(self.load_session(session_id), stage, attempt, category)
+
+    def stage_run_state_path(self, session: SessionRecord, stage: str, attempt: int) -> Path:
+        stage_slug = _stage_slug(stage)
+        return self._stage_attempt_dir(session, stage, attempt, "stage-results") / f"{stage_slug}-run-state.json"
+
+    def stage_result_path(self, session: SessionRecord, stage: str, attempt: int) -> Path:
+        stage_slug = _stage_slug(stage)
+        return self._stage_attempt_dir(session, stage, attempt, "stage-results") / f"{stage_slug}-stage-result.json"
+
+    def stage_output_archive_path(self, session: SessionRecord, stage: str, attempt: int, artifact_name: str) -> Path:
+        stage_slug = _stage_slug(stage)
+        return (
+            self._stage_attempt_dir(session, stage, attempt, "stage-results")
+            / f"{stage_slug}-output-{Path(artifact_name).name}"
         )
-        return status_path
+
+    def stage_contract_path(self, session: SessionRecord, stage: str, attempt: int) -> Path:
+        stage_slug = _stage_slug(stage)
+        return self._stage_attempt_dir(session, stage, attempt, "execution-contexts") / f"{stage_slug}-task-contract.json"
+
+    def stage_prompt_bundle_path(self, session: SessionRecord, stage: str, attempt: int) -> Path:
+        stage_slug = _stage_slug(stage)
+        return self._stage_attempt_dir(session, stage, attempt, "execution-contexts") / f"{stage_slug}-agent-prompt-bundle.md"
+
+    def stage_output_schema_path(self, session: SessionRecord, stage: str, attempt: int) -> Path:
+        """Per-attempt output schema path (legacy). Prefer session_output_schema_path()."""
+        stage_slug = _stage_slug(stage)
+        return self._stage_attempt_dir(session, stage, attempt, "execution-contexts") / f"{stage_slug}-output-schema.json"
+
+    def session_output_schema_path(self, session: SessionRecord) -> Path:
+        """Repo-level output schema path — identical for all sessions, shared across the project."""
+        return self.root / "output-schema.json"
+
+    def runtime_trace_path(self, session: SessionRecord, stage: str, attempt: int) -> Path:
+        stage_slug = _stage_slug(stage)
+        return self._stage_attempt_dir(session, stage, attempt, "stage-results") / f"{stage_slug}-runtime-trace.json"
+
+    def command_stdout_path(self, session: SessionRecord, stage: str, attempt: int) -> Path:
+        stage_slug = _stage_slug(stage)
+        return self._stage_attempt_dir(session, stage, attempt, "command-outputs") / f"{stage_slug}-command-stdout.txt"
+
+    def command_stderr_path(self, session: SessionRecord, stage: str, attempt: int) -> Path:
+        stage_slug = _stage_slug(stage)
+        return self._stage_attempt_dir(session, stage, attempt, "command-outputs") / f"{stage_slug}-command-stderr.txt"
+
+    def skill_asset_root(self, session: SessionRecord, stage: str, attempt: int) -> Path:
+        return self._stage_attempt_dir(session, stage, attempt, "execution-contexts") / "skills" / ".agent-team" / "skills"
+
+    def _public_session_dir(self, session_id: str) -> Path:
+        return self.root / session_id
+
+    def _runtime_session_dir(self, session_id: str) -> Path:
+        return self.root / "_runtime" / "sessions" / session_id
+
+    def _legacy_session_dir(self, session_id: str) -> Path:
+        return self.root / session_id
+
+    def _session_json_path(self, session_id: str) -> Path:
+        runtime_path = self._runtime_session_dir(session_id) / "session.json"
+        if runtime_path.exists():
+            return runtime_path
+        return self._legacy_session_dir(session_id) / "session.json"
+
+    def _stage_attempt_dir(self, session: SessionRecord, stage: str, attempt: int, category: str) -> Path:
+        return session.session_dir / "roles" / _stage_slug(stage) / _attempt_dir_name(attempt) / category
+
+    def _stage_run_state_path_for_run_id(self, session: SessionRecord, run_id: str) -> Path:
+        path = self._find_stage_run_state_path(session.session_dir, run_id)
+        if path is not None:
+            return path
+        return session.session_dir / "stage_runs" / f"{run_id}.json"
+
+    def _find_stage_run_state_path(self, session_dir: Path, run_id: str) -> Path | None:
+        for path in sorted((session_dir / "roles").glob("*/attempt-*/stage-results/*-stage-result.json")):
+            try:
+                payload = json.loads(path.read_text())
+            except json.JSONDecodeError:
+                continue
+            if payload.get("run_id") == run_id:
+                return path
+        for path in sorted((session_dir / "roles").glob("*/attempt-*/stage-results/*-run-state.json")):
+            try:
+                payload = json.loads(path.read_text())
+            except json.JSONDecodeError:
+                continue
+            if payload.get("run_id") == run_id:
+                return path
+        for path in sorted((session_dir / "stage-results").glob("*/attempt-*/*-run-state.json")):
+            try:
+                payload = json.loads(path.read_text())
+            except json.JSONDecodeError:
+                continue
+            if payload.get("run_id") == run_id:
+                return path
+        legacy_path = session_dir / "stage_runs" / f"{run_id}.json"
+        if legacy_path.exists():
+            return legacy_path
+        return None
+
+    def _stage_run_records(self, session_dir: Path) -> list[StageRunRecord]:
+        records_by_id: dict[str, StageRunRecord] = {}
+        # Per-role files are authoritative; read them first
+        for pattern in [
+            "*/attempt-*/stage-results/*-stage-result.json",
+            "*/attempt-*/stage-results/*-run-state.json",
+        ]:
+            roles_dir = session_dir / "roles"
+            if roles_dir.exists():
+                for path in sorted(roles_dir.glob(pattern)):
+                    try:
+                        run = StageRunRecord.from_dict(json.loads(path.read_text()))
+                    except (json.JSONDecodeError, TypeError, ValueError):
+                        continue
+                    records_by_id[run.run_id] = run
+        # Legacy stage-results dir
+        legacy_results = session_dir / "stage-results"
+        if legacy_results.exists():
+            for path in sorted(legacy_results.glob("*/attempt-*/*-run-state.json")):
+                try:
+                    run = StageRunRecord.from_dict(json.loads(path.read_text()))
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    continue
+                records_by_id.setdefault(run.run_id, run)
+        # Legacy stage_runs dir
+        legacy_runs_dir = session_dir / "stage_runs"
+        if legacy_runs_dir.exists():
+            for path in sorted(legacy_runs_dir.glob("*.json")):
+                if "_" in path.stem:
+                    continue
+                try:
+                    run = StageRunRecord.from_dict(json.loads(path.read_text()))
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    continue
+                records_by_id.setdefault(run.run_id, run)
+        # session.json refs fill in any remaining gaps (backward compat with old full records)
+        session_path = session_dir / "session.json"
+        if session_path.exists():
+            payload = json.loads(session_path.read_text())
+            for item in payload.get("stage_runs", []):
+                try:
+                    run = StageRunRecord.from_dict(item)
+                except (TypeError, ValueError):
+                    continue
+                records_by_id.setdefault(run.run_id, run)
+        return list(records_by_id.values())
+
+    def _session_id_from_session_dir(self, path: Path) -> str:
+        return path.name
 
     def _append_unique_section(self, path: Path, title: str, content: str, marker: str) -> None:
         existing = path.read_text() if path.exists() else f"# {title}\n\n"
@@ -725,18 +948,25 @@ class StateStore:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload, indent=2))
 
-    def _stage_runs_dir(self, session: SessionRecord) -> Path:
-        return session.session_dir / "stage_runs"
-
     def _save_stage_run(self, session: SessionRecord, run: StageRunRecord) -> None:
-        runs_dir = self._stage_runs_dir(session)
-        runs_dir.mkdir(parents=True, exist_ok=True)
-        self._write_json(runs_dir / f"{run.run_id}.json", run.to_dict())
+        result_path = self.stage_result_path(session, run.stage, run.attempt)
+        self._write_json(result_path, run.to_dict())
+        legacy_run_state_path = self.stage_run_state_path(session, run.stage, run.attempt)
+        if legacy_run_state_path.exists():
+            legacy_run_state_path.unlink()
 
         session_path = session.session_dir / "session.json"
         payload = json.loads(session_path.read_text()) if session_path.exists() else session.to_dict()
         records = [item for item in payload.get("stage_runs", []) if item.get("run_id") != run.run_id]
-        records.append(run.to_dict())
+        records.append({
+            "run_id": run.run_id,
+            "stage": run.stage,
+            "attempt": run.attempt,
+            "state": run.state,
+            "created_at": run.created_at,
+            "updated_at": run.updated_at,
+            "result_path": str(result_path),
+        })
         payload["stage_runs"] = records
         payload["updated_at"] = run.updated_at
         self._write_json(session_path, payload)
@@ -763,7 +993,7 @@ class StateStore:
             ("review_completion", "review_completion.json"),
             ("deviation_checklist", "deviation_checklist.md"),
         ):
-            path = session.artifact_dir / filename
+            path = session.session_dir / filename
             if path.exists():
                 paths[key] = str(path)
         return paths
@@ -773,7 +1003,7 @@ class StateStore:
         candidate = base
         suffix = 1
 
-        while (self.root / candidate).exists():
+        while self._public_session_dir(candidate).exists() or self._runtime_session_dir(candidate).exists():
             suffix += 1
             candidate = f"{base}-{suffix}"
 
@@ -788,12 +1018,12 @@ class StateStore:
             return {}
 
         artifact_paths: dict[str, str] = {}
-        contract_path = session.artifact_dir / "acceptance_contract.json"
+        contract_path = session.session_dir / "acceptance_contract.json"
         self._write_json(contract_path, contract.to_dict())
         artifact_paths["acceptance_contract"] = str(contract_path)
 
         if contract.review_method:
-            review_completion_path = session.artifact_dir / "review_completion.json"
+            review_completion_path = session.session_dir / "review_completion.json"
             self._write_json(
                 review_completion_path,
                 {
@@ -815,17 +1045,15 @@ class StateStore:
             )
             artifact_paths["review_completion"] = str(review_completion_path)
 
-            deviation_checklist_path = session.artifact_dir / "deviation_checklist.md"
+            deviation_checklist_path = session.session_dir / "deviation_checklist.md"
             deviation_checklist_path.write_text("# Deviation Checklist\n\nPending review execution.\n")
             artifact_paths["deviation_checklist"] = str(deviation_checklist_path)
 
         return artifact_paths
 
-
 def artifact_name_for_stage(stage: str) -> str:
     return {
-        "Product": "prd.md",
-        "TechPlan": "technical_plan.md",
+        "Product": "product-requirements.md",
         "Dev": "implementation.md",
         "QA": "qa_report.md",
         "Acceptance": "acceptance_report.md",
@@ -838,7 +1066,18 @@ def _slugify(text: str) -> str:
     return cleaned[:40] or "session"
 
 
+def _stage_slug(stage: str) -> str:
+    return STAGE_SLUGS.get(stage, _slugify(stage))
+
+
+def _attempt_dir_name(attempt: int) -> str:
+    return f"attempt-{attempt:03d}"
+
+
 def _round_index_from_context_path(path: Path) -> int:
+    match = re.search(r"attempt-(\d+)", str(path.parent))
+    if match:
+        return int(match.group(1))
     match = re.search(r"_round_(\d+)\.json$", path.name)
     return int(match.group(1)) if match else 0
 

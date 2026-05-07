@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from html import escape
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
@@ -8,7 +9,7 @@ from typing import Iterable
 from .packaged_assets import ASSET_ROOT
 
 
-STAGES = ("Dev", "QA", "Acceptance")
+STAGES = ("Product", "Dev", "QA", "Acceptance")
 SOURCE_ORDER = {"builtin": 0, "personal": 1, "project": 2}
 SOURCE_LABELS = {"builtin": "built-in", "personal": "personal", "project": "project"}
 SOURCE_SCOPES = {"builtin": "global", "personal": "global", "project": "project"}
@@ -21,6 +22,7 @@ class Skill:
     content: str
     source: str
     path: Path
+    source_ref: str = ""
     stages: tuple[str, ...] = STAGES
     delivery: str = "prompt"
     sandbox_files: tuple[str, ...] = ()
@@ -39,7 +41,9 @@ class SkillPreferences:
 
     @property
     def is_first_time(self) -> bool:
-        return not self.initialized and not any(self.last.get(stage.lower()) for stage in STAGES)
+        return not self.initialized and not any(
+            self.last.get(stage.lower()) or self.defaults.get(stage.lower()) for stage in STAGES
+        )
 
     def selected_for(self, stage: str) -> list[str]:
         key = stage.lower()
@@ -146,21 +150,33 @@ class SkillRegistry:
         return skills
 
 
-def skill_injection_text(skills: list[Skill]) -> str:
+def skill_injection_text(skills: list[Skill], *, asset_root: str = ".agent-team/skills") -> str:
     if not skills:
         return ""
-    parts = ["== ENABLED SKILLS =="]
+    parts = ["<enabled_skills>"]
     for skill in skills:
-        parts.append(f"### {skill.name}")
+        parts.append(f'<skill name="{escape(skill.name, quote=True)}">')
+        source_ref = skill.source_ref or str(skill.path.parent.resolve())
+        parts.append(f"<source_type>{escape(skill.source)}</source_type>")
+        parts.append(f"<source_ref>{escape(source_ref)}</source_ref>")
         if skill.delivery == "sandbox":
-            parts.append(
-                f"This skill requires sandbox delivery. Skill assets should be available under .agent-team/skills/{skill.name}/."
-            )
+            parts.append("<delivery>sandbox</delivery>")
+            parts.append(f"<asset_root>{escape(f'{asset_root}/{skill.name}/')}</asset_root>")
             if skill.env_vars:
-                parts.append(f"Required environment variables: {', '.join(skill.env_vars)}")
-        parts.append(skill.content)
-        parts.append("")
+                env_vars = "".join(f"<env_var>{escape(value)}</env_var>" for value in skill.env_vars)
+                parts.append(f"<required_environment_variables>{env_vars}</required_environment_variables>")
+        else:
+            parts.append(f"<delivery>{escape(skill.delivery)}</delivery>")
+        parts.append("<content>")
+        parts.append(_xml_cdata(skill.content))
+        parts.append("</content>")
+        parts.append("</skill>")
+    parts.append("</enabled_skills>")
     return "\n".join(parts).strip()
+
+
+def _xml_cdata(value: str) -> str:
+    return "<![CDATA[" + value.replace("]]>", "]]]]><![CDATA[>") + "]]>"
 
 
 def skill_scope(source: str) -> str:
@@ -191,6 +207,7 @@ def _read_skill(path: Path, *, source: str, stage: str | None = None) -> Skill |
         description=description,
         content=body.strip(),
         source=source,
+        source_ref=_skill_source_ref(metadata, path),
         path=path,
         stages=tuple(_normalize_stage(item) for item in stages),
         delivery=metadata.get("delivery", "prompt"),
@@ -231,6 +248,20 @@ def _metadata_list(value: str | None) -> list[str]:
     if stripped.startswith("[") and stripped.endswith("]"):
         stripped = stripped[1:-1]
     return [item.strip().strip('"').strip("'") for item in stripped.split(",") if item.strip()]
+
+
+def _skill_source_ref(metadata: dict[str, str], path: Path) -> str:
+    for key in ("source_ref", "source_url", "source_uri", "source_link", "origin", "repository", "repo_url", "url"):
+        value = metadata.get(key, "").strip()
+        if not value:
+            continue
+        if "://" in value or value.startswith("git@"):
+            return value
+        candidate = Path(value).expanduser()
+        if candidate.is_absolute():
+            return str(candidate)
+        return str((path.parent / candidate).resolve())
+    return str(path.parent.resolve())
 
 
 def _builtin_skill_root() -> Path:

@@ -6,7 +6,7 @@
 
 - 对外是一个 CLI 产品
 - 对内是一套可扩展的 orchestration framework
-- 默认内置 Product / TechPlan / Dev / QA / Acceptance 团队
+- 默认内置 Product / Dev / QA / Acceptance 团队；Dev 先产出技术方案，经确认后再实现
 - 能把反馈、返工、证据和人工决策沉淀为可复用的运行时资产
 
 ## 项目定位
@@ -35,20 +35,18 @@
 当前默认团队是：
 
 - `Product`
-- `TechPlan`
 - `Dev`
 - `QA`
 - `Acceptance`
 
 当前权威流程链路是：
 
-`Product -> CEO approval -> TechPlan -> Dev <-> QA -> Acceptance -> human Go/No-Go`
+`Product -> PRD/acceptance approval -> Dev technical plan -> technical plan approval -> Dev implementation <-> QA -> Acceptance -> human Go/No-Go`
 
 这意味着：
 
-- Product 负责产出 PRD 和验收标准
-- TechPlan 负责产出独立技术方案和验证策略
-- Dev 负责实现、代码自 review 和自验证
+- Product 负责产出 PRD 和独立的验收方案
+- Dev 先负责产出独立技术方案和验证策略，经人确认后再负责实现、代码自 review 和自验证
 - QA 必须独立验证，不能被 Dev 自测替代
 - Acceptance 负责产品级验收建议
 - 最终 human Go/No-Go 必须由人来决定
@@ -69,31 +67,22 @@ agent-team
 
 已经落地的主要命令：
 
-- `agent-team dev`
-- `agent-team start-session`
-- `agent-team status`
-- `agent-team current-stage`
-- `agent-team resume`
-- `agent-team step`
-- `agent-team panel-snapshot`
-- `agent-team panel`
-- `agent-team build-stage-contract`
-- `agent-team acquire-stage-run`
-- `agent-team submit-stage-result`
-- `agent-team verify-stage-result`
+- `agent-team init`
+- `agent-team run`
+- `agent-team status [--verbose|--json]`
+- `agent-team panel [--json]`
+- `agent-team verify-stage-result [--dry-run]`
 - `agent-team record-human-decision`
 - `agent-team record-feedback`
-- `agent-team board-snapshot`
-- `agent-team serve-board`
 - `agent-team review`
-- `agent-team skill list`
+- `agent-team skill list|show|preferences|default`
 
 ### 2. Session Runtime
 
 运行时负责：
 
 - 创建 session
-- 持久化 session 状态
+- 持久化 session 状态，机器状态源是 `_runtime/sessions/<session-id>/workflow_summary.json`
 - 维护当前阶段和当前状态
 - 保存 artifact、journal、findings、feedback
 - 记录人工决策
@@ -130,7 +119,8 @@ worker 看到的是 stage contract，不是自由发挥的任务描述。
 - 显式 stage machine
 - stage contract 生成
 - stage-run acquire / submit / verify 强制流转
-- runtime driver 逐阶段执行 `contract -> context -> acquire -> execute -> submit -> verify -> advance`，并写入 `<run_id>_trace.json`
+- runtime driver 逐阶段执行 `contract -> context -> acquire -> execute -> submit -> verify -> advance`，并把运行步骤、gate 和产物索引合并写入 `<role>-stage-result.json`
+- 模型或命令执行器只返回 stage payload；`session_id`、`stage`、`contract_id`、`artifact_name` 等流程字段由 runtime 注入
 - stage-result candidate bundle 提交
 - wait state 下的人工决策
 - feedback 到三层 memory 的学习回流：`raw/` 原始记录、`extracted/` 可执行规则、`graph/` 关联边
@@ -145,17 +135,23 @@ worker 看到的是 stage contract，不是自由发挥的任务描述。
 <repo-root>/.agent-team/
 ```
 
-session 文件集中在：
+人类可读 session 产物集中在：
 
 ```text
 <repo-root>/.agent-team/<session_id>/
+```
+
+机器运行态文件集中在：
+
+```text
+<repo-root>/.agent-team/_runtime/sessions/<session_id>/
 ```
 
 长期学习内容放在 `<repo-root>/.agent-team/memory/`。每个角色下保留 memory overlay，以及三层结构：
 
 ```text
 <repo-root>/.agent-team/memory/<Role>/raw/findings.jsonl
-<repo-root>/.agent-team/memory/<Role>/extracted/{lessons,context_patch,skill_patch}.md
+<repo-root>/.agent-team/memory/<Role>/extracted/{lessons,context_patch,contract_patch}.md
 <repo-root>/.agent-team/memory/<Role>/graph/relations.jsonl
 ```
 
@@ -163,7 +159,7 @@ runtime 不再默认拆出 repo 外的 `workspaces/`、`artifacts/`、`sessions/
 
 ## 当前边界
 
-当前这套 runtime 已经能用 `run` 自动驱动 Product/TechPlan/Dev/QA/Acceptance，并在人工 gate 处停住。仍在演进的部分主要包括：
+当前这套 runtime 已经能用 `run` 自动驱动 Product/Dev 技术方案/Dev 实现/QA/Acceptance，并在 PRD、技术方案和最终验收三个人工 gate 处停住。仍在演进的部分主要包括：
 
 - 原生 Codex 插件体验
 - 更完整的扩展注册机制
@@ -171,7 +167,7 @@ runtime 不再默认拆出 repo 外的 `workspaces/`、`artifacts/`、`sessions/
 
 所以当前最准确的理解是：
 
-它已经用 runtime 强制“控流程”和“跑流程”；PRD 审批与最终 Go/No-Go 仍由人卡控，`--auto` 只自动穿过中间阶段。
+它已经用 runtime 强制“控流程”和“跑流程”；PRD 审批、技术方案审批与最终 Go/No-Go 仍由人卡控，`--auto` 只自动通过 Dev 实现和 QA。
 
 ## 安装与使用
 
@@ -244,37 +240,42 @@ agent-team run --message "写个js文件，并打印agent-team-runtime" --auto
 agent-team run --message "写个js文件，并打印agent-team-runtime" --executor dry-run --auto
 ```
 
-### Interactive terminal workflow
-
-```bash
-cd /path/to/project
-agent-team dev
-```
-
-`agent-team dev` prompts for the requirement, confirms acceptance criteria, asks for a technical plan confirmation, and then can delegate the remaining Product / Dev / QA / Acceptance harness chain through `codex exec` while preserving runtime gates. The `agent-team run` path models TechPlan as a first-class runtime stage.
-
-默认执行器是 Codex；也可以切到 Claude Code：
-
-```bash
-agent-team dev --executor claude-code
-```
-
-如果只想让某些阶段使用不同执行器：
-
-```bash
-agent-team dev --dev-executor codex --qa-executor claude-code
-```
-
-`agent-team dev` 支持在 Phase 2 技术方案确认后选择 stage skills。首次默认空选，后续会从 `.agent-team/skill-preferences.yaml` 读取上次偏好。
-每次 stage 执行都会在 `stage_runs/<run_id>_skill_injection.json` 记录这次实际注入的 skill 清单，包含 skill 名称、来源（builtin/personal/project）、作用域（global/project）、delivery、安装路径和对应 prompt 路径。
+### Skill defaults and runtime workflow
 
 ```bash
 agent-team skill list
 agent-team skill show security-audit
 agent-team skill preferences
-agent-team dev --with-skills dev:plan --with-skills qa:security-audit
-agent-team dev --skills-empty
+agent-team skill default Dev plan
+agent-team skill default QA security-audit
+agent-team skill default Acceptance e2e-coverage-guard
 ```
+
+`.agent-team/skill-preferences.yaml` stores the per-stage default skills, the last used selection, and frequency counters. `agent-team run` reads that file automatically, so after you configure a stage once, later runs reuse the same skills without re-prompting.
+Each recorded skill also keeps its source reference: local skills use an absolute filesystem path, and remote skills can store a URL so the same skill can be injected into another session later.
+
+One-off overrides still work on `run`:
+
+```bash
+agent-team run --message "<你的需求>" --with-skills Dev:plan --skip-skills QA:security-audit
+agent-team run --message "<你的需求>" --skills-empty
+```
+
+Each stage execution records the actual injected skill list in `_runtime/sessions/<session-id>/roles/<role>/attempt-001/stage-results/<role>-stage-result.json`, under `steps[].details.skill_injection`. The trace includes skill name, source type, source ref, scope, delivery, installed path, and whether the skill was included in the prompt.
+
+Stage outputs keep two surfaces:
+
+- Latest human-facing artifacts stay at the session root, for example `product-requirements.md`, `acceptance_plan.md`, `technical_plan.md`, `implementation.md`, `qa_report.md`, and `acceptance_report.md`.
+- Agent replay/debug files stay under `_runtime/sessions/<session-id>/roles/<role>/attempt-001/`, grouped by before/after/command:
+  - `execution-contexts/<role>-input-context.json`
+  - `execution-contexts/<role>-task-contract.json`
+  - `execution-contexts/<role>-output-schema.json`
+  - `execution-contexts/<role>-agent-prompt-bundle.md` only when `--trace-prompts` is enabled
+  - `stage-results/<role>-stage-result.json`
+  - `stage-results/<role>-output-<artifact-name>.md`
+  - `command-outputs/<role>-command-stdout.txt`
+  - `command-outputs/<role>-command-stderr.txt`
+  - `supplemental-artifacts/<name>`
 
 启动一个 session：
 
@@ -282,7 +283,7 @@ agent-team dev --skills-empty
 agent-team run --message "<你的需求>"
 ```
 
-默认 executor 是 `codex-exec`，runtime 会逐阶段调用 `codex exec`，并在每个阶段之后提交和验证 `StageResultEnvelope`。每个 stage-run 会生成 `<run_id>_trace.json`，记录不可跳过的 `contract_built`、`execution_context_built`、`stage_run_acquired`、`executor_started`、`executor_completed`、`result_submitted`、`gate_evaluated`、`state_advanced` 链路。Product 完成后默认停在 `WaitForCEOApproval`；如果你想在确认 PRD 后自动流转到 Acceptance 并完成交付，可以加：
+默认 executor 是 `codex-exec`，runtime 会逐阶段调用 `codex exec`，并在每个阶段之后提交和验证 `StageResultEnvelope`。每个 stage-run 会生成 `<role>-stage-result.json`，记录不可跳过的 `contract_built`、`execution_context_built`、`stage_run_acquired`、`executor_started`、`executor_completed`、`result_submitted`、`gate_evaluated`、`state_advanced` 链路。Product 完成后默认停在 `WaitForCEOApproval`；确认 PRD 和验收方案后会由 Dev 先生成 `technical_plan.md` 并停在 `WaitForTechnicalPlanApproval`。如果你想在技术方案确认后自动通过 Dev 实现和 QA，可以加：
 
 ```bash
 agent-team run --message "<你的需求>" --auto
@@ -300,32 +301,22 @@ agent-team run --message "<你的需求>" --executor dry-run
 agent-team run --session-id <session_id> --auto
 ```
 
-查看当前阶段：
-
-```bash
-agent-team current-stage --session-id <session_id>
-```
-
-查看当前下一步动作：
-
-```bash
-agent-team step --session-id <session_id>
-```
-
-`step` 会打印下一步动作以及当前 contract 的 `contract_id`、`required_outputs` 和 `required_evidence`。
-
 查看用户友好的状态摘要：
 
 ```bash
 agent-team status --session-id <session_id>
 ```
 
-输出会同步展示当前项目、当前角色和当前状态；同一份内容也会写入 `.agent-team/<session_id>/status.md` 供复盘。
-
-查看机器可读的 panel snapshot：
+查看详细状态（含下一步动作、contract 信息、stage run 状态）：
 
 ```bash
-agent-team panel-snapshot --session-id <session_id>
+agent-team status --session-id <session_id> --verbose
+```
+
+输出机器可读 JSON：
+
+```bash
+agent-team status --session-id <session_id> --json
 ```
 
 打开本地只读 panel：
@@ -334,28 +325,22 @@ agent-team panel-snapshot --session-id <session_id>
 agent-team panel --session-id <session_id> --port 8765
 ```
 
-生成阶段 contract：
+输出 panel JSON 快照（不启动 server）：
 
 ```bash
-agent-team build-stage-contract --session-id <session_id> --stage Product
-```
-
-认领当前 stage run：
-
-```bash
-agent-team acquire-stage-run --session-id <session_id> --stage Product
-```
-
-提交阶段候选结果：
-
-```bash
-agent-team submit-stage-result --session-id <session_id> --bundle /path/to/bundle.json
+agent-team panel --session-id <session_id> --json
 ```
 
 验证候选结果并决定是否推进 workflow：
 
 ```bash
 agent-team verify-stage-result --session-id <session_id>
+```
+
+只读验证（不推进 workflow 状态）：
+
+```bash
+agent-team verify-stage-result --session-id <session_id> --dry-run
 ```
 
 候选 bundle 里的 `evidence` 必须是结构化对象，runtime 会按 contract 的 `evidence_specs` 校验证据名称、类型和必填字段。
@@ -372,20 +357,6 @@ agent-team record-human-decision --session-id <session_id> --decision go
 agent-team record-feedback --session-id <session_id> --source-stage Acceptance --target-stage Dev --issue "<issue>" --apply-rework
 ```
 
-输出只读看板 JSON：
-
-```bash
-agent-team board-snapshot --all-workspaces
-```
-
-启动本地只读看板：
-
-```bash
-agent-team serve-board --all-workspaces --port 8765 --poll-interval 5
-```
-
-只读看板只观察 runtime state，不提供 approve、verify、submit、rework 等写操作。
-
 在 `Codex App` 里运行时，推荐把这套系统理解成：
 
 - `agent-team` 负责控流程、发 contract、认领 run、收 candidate bundle、做 gate 验证、记状态
@@ -399,7 +370,7 @@ agent-team serve-board --all-workspaces --port 8765 --poll-interval 5
 
 - `agent_team/`
   - 当前 runtime 核心实现
-- `Product/`, `TechPlan/`, `Dev/`, `QA/`, `Acceptance/`
+- `Product/`, `Dev/`, `QA/`, `Acceptance/`
   - 角色资产
 - `scripts/`
   - 项目级 helper

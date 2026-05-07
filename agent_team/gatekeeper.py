@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
 
 from .models import AcceptanceContract, EvidenceItem, GateResult, SessionRecord, StageContract, StageOutput, StageResultEnvelope
 from .review_gates import apply_stage_gates
@@ -143,9 +144,13 @@ def normalize_stage_result(
 
 
 def _missing_outputs(*, contract: StageContract, result: StageResultEnvelope) -> list[str]:
-    if result.artifact_name in contract.required_outputs and result.artifact_content.strip():
-        return []
-    return list(contract.required_outputs)
+    present: set[str] = set()
+    if result.artifact_name and result.artifact_content.strip():
+        present.add(Path(result.artifact_name).name)
+    for artifact_name, artifact_content in result.supplemental_artifacts.items():
+        if str(artifact_content).strip():
+            present.add(Path(artifact_name).name)
+    return [name for name in contract.required_outputs if Path(name).name not in present]
 
 
 def _missing_evidence(*, contract: StageContract, evidence: list[EvidenceItem]) -> list[str]:

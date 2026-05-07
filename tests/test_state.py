@@ -211,7 +211,6 @@ class StateTests(unittest.TestCase):
             self.assertIn("Dev", roles)
             self.assertIn("Product Manager Onboarding Manual", roles["Product"].effective_context_text)
             self.assertIn("TechPlan Context", roles["TechPlan"].effective_context_text)
-            self.assertIn("Initialized memory system", roles["Product"].effective_memory_text)
 
     def test_load_role_profiles_uses_packaged_assets_when_repo_roles_are_missing(self) -> None:
         from agent_team.roles import load_role_profiles

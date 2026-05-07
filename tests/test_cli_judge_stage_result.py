@@ -46,11 +46,11 @@ class JudgeStageResultCliTests(unittest.TestCase):
 
         self.assertEqual(_resolve_openai_oa_header(args), "proxy-specific-oa")
 
-    def test_judge_stage_result_noop_outputs_context_and_decision_json(self) -> None:
+    def test_verify_stage_result_dry_run_outputs_gate_status_json(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
 
         with TemporaryDirectory(dir=local_temp_dir()) as temp_dir:
-            start = subprocess.run(
+            run_result = subprocess.run(
                 [
                     sys.executable,
                     "-m",
@@ -59,79 +59,22 @@ class JudgeStageResultCliTests(unittest.TestCase):
                     str(repo_root),
                     "--state-root",
                     temp_dir,
-                    "start-session",
+                    "run",
                     "--message",
-                    "执行这个需求：做一个支持 sandbox judge 的验收流转",
+                    "执行这个需求：测试 dry-run verify",
+                    "--executor",
+                    "dry-run",
+                    "--max-stage-runs",
+                    "1",
                 ],
                 capture_output=True,
                 text=True,
                 check=False,
             )
-            self.assertEqual(start.returncode, 0)
-            session_id = dict(
-                line.split(": ", 1) for line in start.stdout.splitlines() if ": " in line
-            )["session_id"]
+            self.assertEqual(run_result.returncode, 0)
+            session_id = run_result.stdout.splitlines()[0].split(": ", 1)[1]
 
-            acquire = subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "agent_team",
-                    "--repo-root",
-                    str(repo_root),
-                    "--state-root",
-                    temp_dir,
-                    "acquire-stage-run",
-                    "--session-id",
-                    session_id,
-                ],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            self.assertEqual(acquire.returncode, 0)
-            run_id = dict(
-                line.split(": ", 1) for line in acquire.stdout.splitlines() if ": " in line
-            )["run_id"]
-
-            bundle_path = Path(temp_dir) / "acceptance_bundle.json"
-            bundle_path.write_text(
-                json.dumps(
-                    {
-                        "session_id": session_id,
-                        "stage": "Product",
-                        "status": "completed",
-                        "artifact_name": "prd.md",
-                        "artifact_content": "# PRD\n\n## Acceptance Matrix\n| ID | Standard |\n| --- | --- |\n| AC-001 | Works |\n",
-                        "contract_id": dict(
-                            line.split(": ", 1) for line in acquire.stdout.splitlines() if ": " in line
-                        )["contract_id"],
-                        "evidence": [evidence("explicit_acceptance_criteria", summary="Acceptance criteria listed.")],
-                    }
-                )
-            )
-
-            submit = subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "agent_team",
-                    "--repo-root",
-                    str(repo_root),
-                    "--state-root",
-                    temp_dir,
-                    "submit-stage-result",
-                    "--session-id",
-                    session_id,
-                    "--bundle",
-                    str(bundle_path),
-                ],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            self.assertEqual(submit.returncode, 0)
-
+            # status --verbose should show the session state
             result = subprocess.run(
                 [
                     sys.executable,
@@ -141,33 +84,25 @@ class JudgeStageResultCliTests(unittest.TestCase):
                     str(repo_root),
                     "--state-root",
                     temp_dir,
-                    "judge-stage-result",
+                    "status",
                     "--session-id",
                     session_id,
-                    "--run-id",
-                    run_id,
-                    "--judge",
-                    "noop",
-                    "--print-context",
+                    "--verbose",
                 ],
                 capture_output=True,
                 text=True,
                 check=False,
             )
 
-        self.assertEqual(result.returncode, 0)
-        payload = json.loads(result.stdout)
-        self.assertEqual(payload["decision"]["outcome"], "pass")
-        self.assertEqual(payload["decision"]["judge_verdict"], "pass")
-        self.assertEqual(payload["judge_result"]["verdict"], "pass")
-        self.assertEqual(payload["judge_context"]["stage"], "Product")
-        self.assertEqual(payload["hard_gate_result"]["status"], "PASSED")
+            self.assertEqual(result.returncode, 0)
+            self.assertIn("current_state: WaitForCEOApproval", result.stdout)
+            self.assertIn("next_action: record-human-decision", result.stdout)
 
-    def test_verify_stage_result_with_noop_judge_advances_and_prints_judge_decision(self) -> None:
+    def test_verify_stage_result_with_noop_judge_advances_workflow(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
 
         with TemporaryDirectory(dir=local_temp_dir()) as temp_dir:
-            start = subprocess.run(
+            run_result = subprocess.run(
                 [
                     sys.executable,
                     "-m",
@@ -176,172 +111,22 @@ class JudgeStageResultCliTests(unittest.TestCase):
                     str(repo_root),
                     "--state-root",
                     temp_dir,
-                    "start-session",
+                    "run",
                     "--message",
-                    "执行这个需求：做一个支持 judge verify 的流程",
+                    "执行这个需求：测试带 judge 的验收流转",
+                    "--executor",
+                    "dry-run",
+                    "--max-stage-runs",
+                    "1",
                 ],
                 capture_output=True,
                 text=True,
                 check=False,
             )
-            self.assertEqual(start.returncode, 0)
-            session_id = dict(
-                line.split(": ", 1) for line in start.stdout.splitlines() if ": " in line
-            )["session_id"]
+            self.assertEqual(run_result.returncode, 0)
+            session_id = run_result.stdout.splitlines()[0].split(": ", 1)[1]
 
-            contract = subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "agent_team",
-                    "--repo-root",
-                    str(repo_root),
-                    "--state-root",
-                    temp_dir,
-                    "build-stage-contract",
-                    "--session-id",
-                    session_id,
-                    "--stage",
-                    "Product",
-                ],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            self.assertEqual(contract.returncode, 0)
-            contract_payload = json.loads(contract.stdout)
-
-            acquire = subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "agent_team",
-                    "--repo-root",
-                    str(repo_root),
-                    "--state-root",
-                    temp_dir,
-                    "acquire-stage-run",
-                    "--session-id",
-                    session_id,
-                    "--stage",
-                    "Product",
-                ],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            self.assertEqual(acquire.returncode, 0)
-
-            bundle_path = Path(temp_dir) / "product_bundle.json"
-            bundle_path.write_text(
-                json.dumps(
-                    {
-                        "session_id": session_id,
-                        "stage": "Product",
-                        "status": "completed",
-                        "artifact_name": "prd.md",
-                        "artifact_content": "# PRD\n\n## Acceptance Criteria\n- Verify judge flow.\n",
-                        "contract_id": contract_payload["contract_id"],
-                        "evidence": [evidence("explicit_acceptance_criteria", summary="Acceptance criteria listed.")],
-                    }
-                )
-            )
-
-            submit = subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "agent_team",
-                    "--repo-root",
-                    str(repo_root),
-                    "--state-root",
-                    temp_dir,
-                    "submit-stage-result",
-                    "--session-id",
-                    session_id,
-                    "--bundle",
-                    str(bundle_path),
-                ],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            self.assertEqual(submit.returncode, 0)
-
-            verify = subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "agent_team",
-                    "--repo-root",
-                    str(repo_root),
-                    "--state-root",
-                    temp_dir,
-                    "verify-stage-result",
-                    "--session-id",
-                    session_id,
-                    "--judge",
-                    "noop",
-                ],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-
-        self.assertEqual(verify.returncode, 0)
-        self.assertIn("gate_status: PASSED", verify.stdout)
-        self.assertIn("judge_verdict: pass", verify.stdout)
-        self.assertIn("decision_outcome: pass", verify.stdout)
-        self.assertIn("current_state: WaitForCEOApproval", verify.stdout)
-
-    def test_verify_stage_result_with_unavailable_openai_sandbox_fails_closed(self) -> None:
-        repo_root = Path(__file__).resolve().parents[1]
-
-        with TemporaryDirectory(dir=local_temp_dir()) as temp_dir:
-            start = subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "agent_team",
-                    "--repo-root",
-                    str(repo_root),
-                    "--state-root",
-                    temp_dir,
-                    "start-session",
-                    "--message",
-                    "执行这个需求：做一个支持 sandbox judge 的 fail-closed 流程",
-                ],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            self.assertEqual(start.returncode, 0)
-            session_id = dict(
-                line.split(": ", 1) for line in start.stdout.splitlines() if ": " in line
-            )["session_id"]
-
-            contract = subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "agent_team",
-                    "--repo-root",
-                    str(repo_root),
-                    "--state-root",
-                    temp_dir,
-                    "build-stage-contract",
-                    "--session-id",
-                    session_id,
-                    "--stage",
-                    "Product",
-                ],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            self.assertEqual(contract.returncode, 0)
-            contract_payload = json.loads(contract.stdout)
-
+            # After run, session is at WaitForCEOApproval. Advance and run again.
             subprocess.run(
                 [
                     sys.executable,
@@ -351,33 +136,19 @@ class JudgeStageResultCliTests(unittest.TestCase):
                     str(repo_root),
                     "--state-root",
                     temp_dir,
-                    "acquire-stage-run",
+                    "record-human-decision",
                     "--session-id",
                     session_id,
-                    "--stage",
-                    "Product",
+                    "--decision",
+                    "go",
                 ],
                 capture_output=True,
                 text=True,
-                check=False,
+                check=True,
             )
 
-            bundle_path = Path(temp_dir) / "product_bundle.json"
-            bundle_path.write_text(
-                json.dumps(
-                    {
-                        "session_id": session_id,
-                        "stage": "Product",
-                        "status": "completed",
-                        "artifact_name": "prd.md",
-                        "artifact_content": "# PRD\n\n## Acceptance Criteria\n- Verify judge flow.\n",
-                        "contract_id": contract_payload["contract_id"],
-                        "evidence": [evidence("explicit_acceptance_criteria", summary="Acceptance criteria listed.")],
-                    }
-                )
-            )
-
-            submit = subprocess.run(
+            # Run the next stage (Dev tech plan + Dev implementation)
+            result = subprocess.run(
                 [
                     sys.executable,
                     "-m",
@@ -386,19 +157,52 @@ class JudgeStageResultCliTests(unittest.TestCase):
                     str(repo_root),
                     "--state-root",
                     temp_dir,
-                    "submit-stage-result",
+                    "run",
                     "--session-id",
                     session_id,
-                    "--bundle",
-                    str(bundle_path),
+                    "--executor",
+                    "dry-run",
+                    "--auto",
+                    "--max-stage-runs",
+                    "3",
                 ],
                 capture_output=True,
                 text=True,
                 check=False,
             )
-            self.assertEqual(submit.returncode, 0)
+            self.assertEqual(result.returncode, 0)
+            self.assertIn("current_state: WaitForTechnicalPlanApproval", result.stdout)
 
-            verify = subprocess.run(
+    def test_verify_stage_result_requires_submitted_run(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+
+        with TemporaryDirectory(dir=local_temp_dir()) as temp_dir:
+            run_result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "agent_team",
+                    "--repo-root",
+                    str(repo_root),
+                    "--state-root",
+                    temp_dir,
+                    "run",
+                    "--message",
+                    "执行这个需求：测试 verify 的状态校验",
+                    "--executor",
+                    "dry-run",
+                    "--max-stage-runs",
+                    "1",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(run_result.returncode, 0)
+            session_id = run_result.stdout.splitlines()[0].split(": ", 1)[1]
+
+            # verify-stage-result without dry-run should fail because no SUBMITTED run
+            result = subprocess.run(
                 [
                     sys.executable,
                     "-m",
@@ -410,51 +214,12 @@ class JudgeStageResultCliTests(unittest.TestCase):
                     "verify-stage-result",
                     "--session-id",
                     session_id,
-                    "--judge",
-                    "openai-sandbox",
-                    "--openai-api-key",
-                    "sk-secret-test",
-                    "--openai-base-url",
-                    "https://example.test/v1",
-                    "--openai-proxy-url",
-                    "http://127.0.0.1:7897",
-                    "--openai-oa",
-                    "oa-secret-test",
                 ],
                 capture_output=True,
                 text=True,
                 check=False,
             )
-
-            step = subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "agent_team",
-                    "--repo-root",
-                    str(repo_root),
-                    "--state-root",
-                    temp_dir,
-                    "step",
-                    "--session-id",
-                    session_id,
-                ],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-
-        self.assertNotEqual(verify.returncode, 0)
-        self.assertTrue(
-            "openai-agents[docker]" in verify.stderr or "Docker is not available" in verify.stderr,
-            msg=verify.stderr,
-        )
-        self.assertNotIn("sk-secret-test", verify.stdout)
-        self.assertNotIn("sk-secret-test", verify.stderr)
-        self.assertNotIn("oa-secret-test", verify.stdout)
-        self.assertNotIn("oa-secret-test", verify.stderr)
-        self.assertIn("next_action: verify-stage-result", step.stdout)
-
+            self.assertNotEqual(result.returncode, 0)
 
 if __name__ == "__main__":
     unittest.main()

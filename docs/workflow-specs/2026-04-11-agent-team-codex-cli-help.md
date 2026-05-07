@@ -35,7 +35,7 @@
 
 完整最小链路是：
 
-`Product -> CEO approval -> TechPlan -> technical plan approval -> Dev -> QA -> Acceptance -> human Go/No-Go`
+`Product -> PRD/acceptance approval -> Dev technical plan -> technical plan approval -> Dev -> QA -> Acceptance -> human Go/No-Go`
 
 ## Codex 的工作方式
 
@@ -51,7 +51,7 @@ Codex 需要记住输出里的：
 - `artifact_dir`
 - `summary_path`
 
-其中 `artifact_dir` 和 `summary_path` 都会落在仓库内的 `.agent-team/<session_id>/`。
+其中 `artifact_dir` 会落在仓库内的 `.agent-team/<session_id>/`，`summary_path` 会落在 `.agent-team/_runtime/sessions/<session_id>/workflow_summary.json`。
 
 ### 2. 查看当前状态
 
@@ -65,7 +65,7 @@ agent-team current-stage --session-id <session_id>
 agent-team status --session-id <session_id>
 ```
 
-它会输出当前项目、当前角色和当前状态，并同步到 `.agent-team/<session_id>/status.md`。
+它会输出当前项目、当前角色和当前状态。状态从 `.agent-team/_runtime/sessions/<session_id>/workflow_summary.json` 和 `.agent-team/_runtime/sessions/<session_id>/events.jsonl` 动态读取，不生成额外的 `status.md`。
 
 如果当前状态是等待态，先不要继续执行 stage。
 
@@ -122,15 +122,16 @@ Codex 在真实仓库里完成当前角色工作。
   "stage": "Product",
   "contract_id": "<contract_id>",
   "status": "completed",
-  "artifact_name": "prd.md",
-  "artifact_content": "# PRD\n\n## Acceptance Criteria\n- ...\n",
+  "artifact_name": "product-requirements.md",
+  "artifact_content": "# PRD\n\n## Acceptance Plan\n- [Acceptance Plan](acceptance_plan.md)\n",
+  "acceptance_plan_content": "# Acceptance Plan\n\n## Requirements\n- [PRD](product-requirements.md)\n\n## Verification\n- ...",
   "journal": "# Product Journal\n",
   "findings": [],
   "evidence": [
     {
-      "name": "explicit_acceptance_criteria",
-      "kind": "report",
-      "summary": "PRD includes explicit acceptance criteria."
+      "name": "explicit_acceptance_plan",
+      "kind": "artifact",
+      "summary": "Acceptance plan describes verification method and evidence."
     }
   ],
   "summary": "Stage completed"
@@ -165,7 +166,7 @@ agent-team step --session-id <session_id>
 
 Product 完成后，runtime 会进入 `WaitForCEOApproval`。
 
-TechPlan 完成后，runtime 会进入 `WaitForTechPlanApproval`。
+Dev 的技术方案步骤完成后，runtime 会进入 `WaitForTechnicalPlanApproval`。
 
 Acceptance 完成后，runtime 会进入 `WaitForHumanDecision`。
 
@@ -195,7 +196,7 @@ agent-team record-feedback \
   --issue "<issue>" \
   --lesson "<lesson>" \
   --context-update "<context rule>" \
-  --skill-update "<skill rule>"
+  --contract-update "<contract rule>"
 ```
 
 这会把反馈写入角色 memory overlay，并在后续 `build-stage-contract` 时重新注入。
