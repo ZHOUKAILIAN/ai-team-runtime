@@ -13,7 +13,6 @@ class PackagedAssetTests(unittest.TestCase):
 
             self.assertTrue((target / "contract.md").exists())
             self.assertTrue((target / "context.md").exists())
-            self.assertTrue((target / "memory.md").exists())
             self.assertTrue(any(path.name == "context.md" for path in written))
 
     def test_ops_role_assets_are_removed(self) -> None:

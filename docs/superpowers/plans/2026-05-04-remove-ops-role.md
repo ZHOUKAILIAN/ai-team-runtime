@@ -78,13 +78,13 @@ Expected: failures mentioning `ops.context.md`, `Ops` still present in loaded ro
 In `agent_team/roles.py`, change:
 
 ```python
-DEFAULT_ROLE_NAMES = ("Product", "TechPlan", "Dev", "QA", "Acceptance", "Ops")
+DEFAULT_ROLE_NAMES = ("Product", "Dev", "QA", "Acceptance", "Ops")
 ```
 
 to:
 
 ```python
-DEFAULT_ROLE_NAMES = ("Product", "TechPlan", "Dev", "QA", "Acceptance")
+DEFAULT_ROLE_NAMES = ("Product", "Dev", "QA", "Acceptance")
 ```
 
 In `agent_team/project_structure.py`, change `ROLE_SLUGS` from:
@@ -92,7 +92,6 @@ In `agent_team/project_structure.py`, change `ROLE_SLUGS` from:
 ```python
 ROLE_SLUGS = {
     "Product": "product",
-    "TechPlan": "techplan",
     "Dev": "dev",
     "QA": "qa",
     "Acceptance": "acceptance",
@@ -105,7 +104,6 @@ to:
 ```python
 ROLE_SLUGS = {
     "Product": "product",
-    "TechPlan": "techplan",
     "Dev": "dev",
     "QA": "qa",
     "Acceptance": "acceptance",
@@ -115,13 +113,13 @@ ROLE_SLUGS = {
 In `agent_team/state.py`, change:
 
 ```python
-VALID_ROLE_NAMES = {"Product", "TechPlan", "Dev", "QA", "Acceptance", "Ops"}
+VALID_ROLE_NAMES = {"Product", "Dev", "QA", "Acceptance", "Ops"}
 ```
 
 to:
 
 ```python
-VALID_ROLE_NAMES = {"Product", "TechPlan", "Dev", "QA", "Acceptance"}
+VALID_ROLE_NAMES = {"Product", "Dev", "QA", "Acceptance"}
 ```
 
 Keep this mapping unchanged:
@@ -218,13 +216,13 @@ to:
 In `agent_team/assets/roles/Product/SKILL.md`, change:
 
 ```markdown
-- Product must not overwrite TechPlan, Dev, QA, Acceptance, or Ops artifacts.
+- Product must not overwrite Dev, QA, Acceptance, or Ops artifacts.
 ```
 
 to:
 
 ```markdown
-- Product must not overwrite TechPlan, Dev, QA, or Acceptance artifacts.
+- Product must not overwrite Dev, QA, or Acceptance artifacts.
 ```
 
 - [ ] **Step 5: Run asset and role-text checks**
@@ -301,7 +299,6 @@ In `README.md`, remove `Ops` from the default team list:
 
 ```markdown
 - `Product`
-- `TechPlan`
 - `Dev`
 - `QA`
 - `Acceptance`
@@ -320,7 +317,7 @@ Replace role path bullets that include Ops with:
 Ensure the authoritative flow remains:
 
 ```text
-Product -> CEO approval -> TechPlan -> Dev <-> QA -> Acceptance -> human Go/No-Go
+Product -> CEO approval -> Dev technical plan -> Dev implementation <-> QA -> Acceptance -> human Go/No-Go
 ```
 
 - [ ] **Step 4: Update workflow docs**
@@ -334,7 +331,7 @@ In `docs/workflow-specs/2026-04-11-agent-team-cli-runtime-design.md`, change:
 to:
 
 ```markdown
-- Product / TechPlan / Dev / QA / Acceptance 这些角色定义
+- Product / Dev / QA / Acceptance 这些角色定义
 ```
 
 In `docs/workflow-specs/2026-04-11-agent-team-codex-harness-solution.md`, remove `Ops/` from the role directory list and keep the remaining role directories.

@@ -39,9 +39,9 @@ class StateTests(unittest.TestCase):
                 ),
             )
 
-            contract_path = root / session.session_id / "acceptance_contract.json"
-            review_completion_path = root / session.session_id / "review_completion.json"
-            deviation_checklist_path = root / session.session_id / "deviation_checklist.md"
+            contract_path = session.session_dir / "acceptance_contract.json"
+            review_completion_path = session.session_dir / "review_completion.json"
+            deviation_checklist_path = session.session_dir / "deviation_checklist.md"
 
             self.assertTrue(contract_path.exists())
             self.assertTrue(review_completion_path.exists())
@@ -57,20 +57,21 @@ class StateTests(unittest.TestCase):
             store = StateStore(Path(temp_dir))
             session = store.create_session("demo")
 
-            self.assertTrue((Path(temp_dir) / session.session_id / "session.json").exists())
+            self.assertTrue((session.session_dir / "session.json").exists())
             self.assertTrue((Path(temp_dir) / session.session_id).exists())
+            self.assertFalse((Path(temp_dir) / session.session_id / "session.json").exists())
             self.assertFalse((Path(temp_dir) / "sessions").exists())
             self.assertFalse((Path(temp_dir) / "artifacts").exists())
-            workflow_summary = Path(temp_dir) / session.session_id / "workflow_summary.md"
+            workflow_summary = session.session_dir / "workflow_summary.json"
             self.assertTrue(workflow_summary.exists())
-            summary_text = workflow_summary.read_text()
-            self.assertIn("- runtime_mode: session_bootstrap", summary_text)
-            self.assertIn("- current_state: Intake", summary_text)
-            self.assertIn("- current_stage: Intake", summary_text)
-            self.assertIn("- prd_status: pending", summary_text)
-            self.assertIn("- human_decision: pending", summary_text)
-            self.assertIn("- request:", summary_text)
-            self.assertIn("- workflow_summary:", summary_text)
+            self.assertFalse((Path(temp_dir) / session.session_id / "workflow_summary.md").exists())
+            summary = store.load_workflow_summary(session.session_id)
+            self.assertEqual(summary.runtime_mode, "session_bootstrap")
+            self.assertEqual(summary.current_state, "Intake")
+            self.assertEqual(summary.current_stage, "Intake")
+            self.assertEqual(summary.prd_status, "pending")
+            self.assertEqual(summary.human_decision, "pending")
+            self.assertIn("workflow_summary", summary.artifact_paths)
 
     def test_state_store_creates_unique_session_ids_for_same_request(self) -> None:
         from agent_team.state import StateStore
@@ -133,23 +134,23 @@ class StateTests(unittest.TestCase):
                     severity="high",
                     lesson="Preserve product-visible empty states in regression coverage.",
                     proposed_context_update="Review user-visible empty states before closing implementation.",
-                    proposed_skill_update="Require user-visible empty-state evidence before reporting completion.",
+                    proposed_contract_update="Require user-visible empty-state evidence before reporting completion.",
                 )
             )
 
             lessons = (root / "memory" / "Dev" / "lessons.md").read_text()
             context_patch = (root / "memory" / "Dev" / "context_patch.md").read_text()
-            skill_patch = (root / "memory" / "Dev" / "skill_patch.md").read_text()
+            contract_patch = (root / "memory" / "Dev" / "contract_patch.md").read_text()
 
             self.assertIn("- source: Acceptance", lessons)
             self.assertIn("- severity: high", lessons)
             self.assertIn("- issue: Acceptance found a missing empty-state flow.", lessons)
             self.assertIn("Constraint:", context_patch)
             self.assertIn("Completion signal:", context_patch)
-            self.assertIn("Goal:", skill_patch)
-            self.assertIn("Completion signal:", skill_patch)
+            self.assertIn("Goal:", contract_patch)
+            self.assertIn("Completion signal:", contract_patch)
 
-    def test_record_stage_preserves_round_archives_and_latest_artifact(self) -> None:
+    def test_record_stage_preserves_latest_artifact(self) -> None:
         from agent_team.models import SessionRecord, StageOutput
         from agent_team.state import StateStore
 
@@ -189,9 +190,8 @@ class StateTests(unittest.TestCase):
                 round_index=2,
             )
 
-            self.assertTrue(round_one.archive_path.exists())
-            self.assertTrue(round_two.archive_path.exists())
-            self.assertNotEqual(round_one.archive_path, round_two.archive_path)
+            self.assertIsNone(round_one.archive_path)
+            self.assertIsNone(round_two.archive_path)
             self.assertEqual((session.artifact_dir / "qa_report.md").read_text(), "round two")
             self.assertEqual((session.artifact_dir / "review_completion.json").read_text(), '{"completed": true}')
             self.assertIn("review_completion.json", round_two.supplemental_artifact_paths)
@@ -207,10 +207,9 @@ class StateTests(unittest.TestCase):
             roles = load_role_profiles(repo_root=repo_root, state_root=state_root)
 
             self.assertIn("Product", roles)
-            self.assertIn("TechPlan", roles)
             self.assertIn("Dev", roles)
+            self.assertNotIn("TechPlan", roles)
             self.assertIn("Product Manager Onboarding Manual", roles["Product"].effective_context_text)
-            self.assertIn("TechPlan Context", roles["TechPlan"].effective_context_text)
 
     def test_load_role_profiles_uses_packaged_assets_when_repo_roles_are_missing(self) -> None:
         from agent_team.roles import load_role_profiles
@@ -225,11 +224,10 @@ class StateTests(unittest.TestCase):
             roles = load_role_profiles(repo_root=repo_root, state_root=state_root)
 
             self.assertIn("Product", roles)
-            self.assertIn("TechPlan", roles)
             self.assertIn("QA", roles)
+            self.assertNotIn("TechPlan", roles)
             self.assertNotIn("Ops", roles)
             self.assertIn("Product Manager Onboarding Manual", roles["Product"].effective_context_text)
-            self.assertIn("TechPlan Context", roles["TechPlan"].effective_context_text)
 
     def test_artifact_name_for_stage_keeps_ops_compatibility(self) -> None:
         from agent_team.state import artifact_name_for_stage
@@ -352,7 +350,6 @@ class StateTests(unittest.TestCase):
     def test_load_workflow_summary_falls_back_to_artifact_dir(self) -> None:
         from agent_team.models import SessionRecord, WorkflowSummary
         from agent_team.state import StateStore
-        from agent_team.workflow_summary import render_workflow_summary
 
         with TemporaryDirectory(dir=local_temp_dir()) as temp_dir:
             root = Path(temp_dir) / "sessions"
@@ -384,17 +381,16 @@ class StateTests(unittest.TestCase):
                 .replace("__SESSION_DIR__", str(session_dir))
                 .replace("__ARTIFACT_DIR__", str(artifact_dir))
             )
-            (artifact_dir / "workflow_summary.md").write_text(
-                render_workflow_summary(
-                    WorkflowSummary(
-                        session_id=session_id,
-                        runtime_mode="session_bootstrap",
-                        current_state="WaitForHumanDecision",
-                        current_stage="Acceptance",
-                        acceptance_status="recommended_go",
-                        artifact_paths={"workflow_summary": str(artifact_dir / "workflow_summary.md")},
-                    )
-                )
+            store._write_json(
+                artifact_dir / "workflow_summary.json",
+                WorkflowSummary(
+                    session_id=session_id,
+                    runtime_mode="session_bootstrap",
+                    current_state="WaitForHumanDecision",
+                    current_stage="Acceptance",
+                    acceptance_status="recommended_go",
+                    artifact_paths={"workflow_summary": str(artifact_dir / "workflow_summary.json")},
+                ).to_dict(),
             )
 
             summary = store.load_workflow_summary(session_id)
@@ -404,7 +400,7 @@ class StateTests(unittest.TestCase):
             self.assertEqual(summary.acceptance_status, "recommended_go")
             self.assertEqual(
                 summary.artifact_paths["workflow_summary"],
-                str(artifact_dir / "workflow_summary.md"),
+                str(artifact_dir / "workflow_summary.json"),
             )
 
 

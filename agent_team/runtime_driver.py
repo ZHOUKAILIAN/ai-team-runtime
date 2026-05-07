@@ -282,6 +282,7 @@ class CommandStageExecutor:
         self.timeout_seconds = timeout_seconds
 
     def execute(self, request: StageExecutionRequest) -> StageResultEnvelope:
+        request.result_path.parent.mkdir(parents=True, exist_ok=True)
         env = os.environ.copy()
         env.update(_stage_environment(request))
         try:
@@ -335,6 +336,7 @@ class CodexExecStageExecutor:
         self.options = options
 
     def execute(self, request: StageExecutionRequest) -> StageResultEnvelope:
+        request.result_path.parent.mkdir(parents=True, exist_ok=True)
         prompt = _build_codex_prompt(request)
         if request.prompt_path is not None:
             request.prompt_path.parent.mkdir(parents=True, exist_ok=True)
@@ -542,6 +544,9 @@ def _execute_stage(
         worker=executor.name,
     )
     stage_result_path = store.stage_result_path(session, stage, run.attempt)
+    result_bundle_path = store.command_stdout_path(session, stage, run.attempt).with_name(
+        f"{stage.lower()}-result-bundle.json"
+    )
     prompt_path = store.stage_prompt_bundle_path(session, stage, run.attempt) if options.trace_prompts else None
     skill_asset_root = store.skill_asset_root(session, stage, run.attempt)
     stage_skills = list(options.enabled_skills_by_stage.get(stage, []))
@@ -582,7 +587,7 @@ def _execute_stage(
         context=context,
         contract_path=store.stage_contract_path(session, stage, run.attempt),
         context_path=context_path,
-        result_path=stage_result_path,
+        result_path=result_bundle_path,
         output_schema_path=store.session_output_schema_path(session),
         prompt_path=prompt_path,
         skill_asset_root=skill_asset_root,

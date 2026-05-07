@@ -51,7 +51,7 @@
 | `severity` | 严重程度 |
 | `lesson` | 从该缺陷中提炼的经验教训，供后续 session 复用 |
 | `proposed_context_update` | Agent 建议写入 role context（上下文文件）的内容 |
-| `proposed_skill_update` | Agent 建议写入 role skill（技能定义）的内容 |
+| `proposed_contract_update` | Agent 建议写入 role contract（角色契约）的内容 |
 | `evidence` | 支撑该 finding 的证据文本 |
 | `evidence_kind` | 证据类型 |
 | `required_evidence` | 验证该缺陷已修复需要的证据清单 |

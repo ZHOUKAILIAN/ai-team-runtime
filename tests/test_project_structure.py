@@ -33,8 +33,8 @@ class ProjectStructureTests(unittest.TestCase):
             structure = ensure_project_structure(repo_root)
 
             self.assertTrue(structure.used_default_docs)
-            self.assertTrue((repo_root / "docs" / "requirements").exists())
-            self.assertTrue((repo_root / "docs" / "designs").exists())
+            self.assertFalse((repo_root / "docs" / "requirements").exists())
+            self.assertFalse((repo_root / "docs" / "designs").exists())
             self.assertTrue((repo_root / "agent-team" / "project" / "roles" / "product.context.md").exists())
             self.assertTrue((repo_root / "agent-team" / "project" / "roles" / "dev.context.md").exists())
             self.assertTrue((repo_root / "agent-team" / "project" / "roles" / "dev.contract.md").exists())

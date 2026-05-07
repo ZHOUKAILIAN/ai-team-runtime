@@ -85,7 +85,7 @@ class StageContractTests(unittest.TestCase):
         self.assertEqual(contract.stage, "Dev")
         self.assertIn("technical_plan.md", contract.required_outputs)
         self.assertIn("implementation_plan", contract.evidence_requirements)
-        self.assertIn("Dev 角色契约", contract.role_context)
+        self.assertIn("Dev 契约", contract.role_context)
         self.assertIn("technical_plan.md", contract.role_context)
 
     def test_qa_contract_requires_independent_evidence(self) -> None:

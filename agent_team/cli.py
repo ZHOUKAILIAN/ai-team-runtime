@@ -336,13 +336,7 @@ def build_parser() -> argparse.ArgumentParser:
     feedback_parser.add_argument("--severity", default="medium", help="Feedback severity.")
     feedback_parser.add_argument("--lesson", default="", help="Reusable lesson to store.")
     feedback_parser.add_argument("--context-update", default="", help="Context rule to store.")
-    feedback_parser.add_argument(
-        "--contract-update",
-        "--skill-update",
-        dest="contract_update",
-        default="",
-        help="Contract rule to store. --skill-update is accepted as a backwards-compatible alias.",
-    )
+    feedback_parser.add_argument("--contract-update", default="", help="Contract rule to store.")
     feedback_parser.add_argument("--evidence", default="", help="Optional evidence summary.")
     feedback_parser.add_argument("--evidence-kind", default="", help="Evidence source classification.")
     feedback_parser.add_argument(
