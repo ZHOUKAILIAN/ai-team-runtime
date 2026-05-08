@@ -19,12 +19,12 @@ from .openai_sandbox_judge import OpenAISandboxJudge, OpenAISandboxJudgeUnavaila
 from .stage_contracts import build_stage_contract
 from .stage_machine import StageMachine
 from .stage_payload import envelope_from_stage_payload
-from .stage_policies import default_policy_registry, dev_technical_plan_policy
+from .stage_policies import default_policy_registry
 from .state import StageRunStateError, StateStore, artifact_name_for_stage
 from .skill_registry import Skill, skill_injection_text, skill_scope
+from .workflow import EXECUTABLE_STATES, artifact_key_for
 
 
-EXECUTABLE_STATES = {"Product", "Dev", "QA", "Acceptance"}
 REQUIRED_PASS_TRACE_STEPS = [
     "contract_built",
     "execution_context_built",
@@ -461,21 +461,11 @@ def _handle_wait_state(
     auto_advance_intermediate: bool,
 ) -> tuple[str, str] | None:
     del repo_root
-    if summary.current_state == "WaitForCEOApproval":
+    if summary.current_state == "WaitForProductDefinitionApproval":
         if summary.runtime_mode == "runtime_driver_interactive":
             return ("waiting_human", "record-human-decision --decision go|rework|no-go")
         return ("waiting_human", "record-human-decision --decision go")
-    if summary.current_state == "WaitForTechnicalPlanApproval":
-        return ("waiting_human", "record-human-decision --decision go|rework|no-go")
-    if summary.current_state == "WaitForDevApproval":
-        if auto_advance_intermediate:
-            _apply_human_decision(store=store, summary=summary, decision="go")
-            return None
-        return ("waiting_human", "record-human-decision --decision go|rework|no-go")
-    if summary.current_state == "WaitForQAApproval":
-        if auto_advance_intermediate:
-            _apply_human_decision(store=store, summary=summary, decision="go")
-            return None
+    if summary.current_state == "WaitForTechnicalDesignApproval":
         return ("waiting_human", "record-human-decision --decision go|rework|no-go")
     if summary.current_state == "WaitForHumanDecision":
         return ("waiting_human", "record-human-decision --decision go|no-go|rework")
@@ -598,9 +588,8 @@ def _execute_stage(
     request.contract_path.parent.mkdir(parents=True, exist_ok=True)
     request.contract_path.write_text(json.dumps(contract.to_dict(), ensure_ascii=False, indent=2))
     schema_path = request.output_schema_path
-    if not schema_path.exists():
-        schema_path.parent.mkdir(parents=True, exist_ok=True)
-        schema_path.write_text(json.dumps(_stage_result_schema(), indent=2))
+    schema_path.parent.mkdir(parents=True, exist_ok=True)
+    schema_path.write_text(json.dumps(_stage_result_schema(), indent=2))
     prompt_text = _build_codex_prompt(request)
     if request.prompt_path is not None:
         request.prompt_path.parent.mkdir(parents=True, exist_ok=True)
@@ -751,11 +740,7 @@ def _execute_stage(
                 artifact_paths=common_artifact_paths,
             )
             return trace_gate
-        artifact_key = (
-            "technical_plan"
-            if normalized_result.stage == "Dev" and normalized_result.artifact_name == "technical_plan.md"
-            else normalized_result.stage.lower()
-        )
+        artifact_key = artifact_key_for(normalized_result.stage)
         updated_summary.artifact_paths[artifact_key] = str(stage_record.artifact_path)
         updated_summary.artifact_paths.update(stage_record.supplemental_artifact_paths)
         store.save_workflow_summary(session, updated_summary)
@@ -825,7 +810,7 @@ def _evaluate_stage_result(
             contract=contract,
             result=result,
             original_request_summary=store.load_session(result.session_id).request,
-            approved_prd_summary=_approved_prd_summary(summary=summary, result=result),
+            approved_product_definition_summary=_approved_product_definition_summary(summary=summary, result=result),
             approved_acceptance_matrix=[],
         )
     except OpenAISandboxJudgeUnavailable as exc:
@@ -834,8 +819,6 @@ def _evaluate_stage_result(
 
 
 def _policy_for_result(result: StageResultEnvelope):
-    if result.stage == "Dev" and result.artifact_name == "technical_plan.md":
-        return dev_technical_plan_policy()
     return default_policy_registry().get(result.stage)
 
 
@@ -857,22 +840,18 @@ def _gate_result_from_evaluation(evaluation) -> GateResult:
     )
 
 
-def _approved_prd_summary(*, summary: WorkflowSummary, result: StageResultEnvelope) -> str:
-    if result.stage == "Product" and result.artifact_name in {artifact_name_for_stage("Product"), "prd.md"}:
+def _approved_product_definition_summary(*, summary: WorkflowSummary, result: StageResultEnvelope) -> str:
+    if result.stage == "ProductDefinition" and result.artifact_name == artifact_name_for_stage("ProductDefinition"):
         return result.artifact_content[:4000]
-    prd_path = (
-        summary.artifact_paths.get("product")
-        or summary.artifact_paths.get("product_requirements")
-        or summary.artifact_paths.get("prd")
-    )
-    if prd_path and Path(prd_path).exists():
-        return Path(prd_path).read_text()[:4000]
+    product_definition_path = summary.artifact_paths.get("product_definition")
+    if product_definition_path and Path(product_definition_path).exists():
+        return Path(product_definition_path).read_text()[:4000]
     return ""
 
 
 def _expected_submission_stage(summary: WorkflowSummary) -> str | None:
-    if summary.current_state in {"Intake", "ProductDraft"}:
-        return "Product"
+    if summary.current_state == "Intake":
+        return "Route"
     if summary.current_state in EXECUTABLE_STATES:
         return summary.current_state
     return None
@@ -907,33 +886,44 @@ def _result_from_summary(
 
 
 def _default_evidence(stage: str, *, artifact_name: str | None = None) -> list[EvidenceItem]:
-    if stage == "Dev" and artifact_name == "technical_plan.md":
-        return [
-            EvidenceItem(
-                name="implementation_plan",
-                kind="report",
-                summary="Technical plan identifies implementation steps and verification commands.",
-                producer="runtime-driver",
-            )
-        ]
     return {
-        "Product": [
+        "Route": [
             EvidenceItem(
-                name="explicit_acceptance_plan",
+                name="route_classification",
                 kind="artifact",
-                summary=(
-                    "Product produced a separate acceptance plan linked from the PRD, with verification data "
-                    "and evidence expectations."
-                ),
-                artifact_path="acceptance_plan.md",
+                summary="Route classified the request against five-layer responsibilities and red lines.",
                 producer="runtime-driver",
             ),
         ],
-        "Dev": [
+        "ProductDefinition": [
+            EvidenceItem(
+                name="l1_classification",
+                kind="artifact",
+                summary="ProductDefinition separated L1 candidates from non-L1 task content.",
+                producer="runtime-driver",
+            )
+        ],
+        "ProjectRuntime": [
+            EvidenceItem(
+                name="project_landing_review",
+                kind="report",
+                summary="ProjectRuntime checked project landing defaults and L3 deltas.",
+                producer="runtime-driver",
+            )
+        ],
+        "TechnicalDesign": [
+            EvidenceItem(
+                name="technical_design_plan",
+                kind="report",
+                summary="TechnicalDesign identified implementation steps and verification commands.",
+                producer="runtime-driver",
+            )
+        ],
+        "Implementation": [
             EvidenceItem(
                 name="self_code_review",
                 kind="report",
-                summary="Dry-run Dev reviewed the generated implementation handoff and found no code changes.",
+                summary="Dry-run Implementation reviewed the generated implementation handoff.",
                 producer="runtime-driver",
             ),
             EvidenceItem(
@@ -945,21 +935,37 @@ def _default_evidence(stage: str, *, artifact_name: str | None = None) -> list[E
                 producer="runtime-driver",
             ),
         ],
-        "QA": [
+        "Verification": [
             EvidenceItem(
                 name="independent_verification",
                 kind="command",
-                summary="QA independently reran critical verification.",
+                summary="Verification independently reran critical checks.",
                 command="agent-team runtime dry-run",
                 exit_code=0,
                 producer="runtime-driver",
             )
         ],
+        "GovernanceReview": [
+            EvidenceItem(
+                name="layer_governance_review",
+                kind="report",
+                summary="GovernanceReview checked layer boundaries, evidence, and writeback obligations.",
+                producer="runtime-driver",
+            )
+        ],
         "Acceptance": [
             EvidenceItem(
-                name="product_level_validation",
+                name="product_and_governance_validation",
                 kind="report",
-                summary="Acceptance validated product-level behavior.",
+                summary="Acceptance validated product result plus governance evidence.",
+                producer="runtime-driver",
+            )
+        ],
+        "SessionHandoff": [
+            EvidenceItem(
+                name="local_control_handoff",
+                kind="artifact",
+                summary="SessionHandoff preserved local-control continuity and unresolved decisions.",
                 producer="runtime-driver",
             )
         ],
@@ -967,96 +973,115 @@ def _default_evidence(stage: str, *, artifact_name: str | None = None) -> list[E
 
 
 def _dry_run_artifact_content(stage: str, context: StageExecutionContext, *, artifact_name: str | None = None) -> str:
-    if stage == "Product":
+    if stage == "Route":
+        return (
+            "{\n"
+            '  "request": ' + json.dumps(context.original_request_summary, ensure_ascii=False) + ",\n"
+            '  "affected_layers": ["L1", "L2", "L3", "L4", "L5"],\n'
+            '  "required_stages": ["ProductDefinition", "ProjectRuntime", "TechnicalDesign", '
+            '"Implementation", "Verification", "GovernanceReview", "Acceptance", "SessionHandoff"],\n'
+            '  "red_lines": ["lower_layers_must_not_rewrite_upper_layer_truth", '
+            '"do_not_promote_l5_or_research_to_formal_truth"],\n'
+            '  "status": "dry_run_classified"\n'
+            "}\n"
+        )
+    if stage == "ProductDefinition":
         revision_summary = _human_revision_summary(context.actionable_findings)
         revision_section = (
             "\n## 人工修改意见\n"
             f"{revision_summary}\n"
-            "这些意见必须折入目标、用户场景和验收方案，而不是只作为备注保留。\n"
+            "这些意见必须先判断是否属于 L1；非 L1 内容应下沉到对应层，不得混入产品定义。\n"
             if revision_summary
             else ""
         )
         return (
-            "# 需求方案\n\n"
+            "# Product Definition Delta\n\n"
             f"## 原始需求\n{context.original_request_summary}\n\n"
             f"{revision_section}"
-            "## 目标\n"
-            "- 由 runtime driver 控制阶段执行，而不是依赖对话承诺。\n"
-            "- Product、Dev、QA、Acceptance 的产物都通过阶段契约验证。\n\n"
-            "## 验收文档\n"
-            "- [验收方案](acceptance_plan.md)\n\n"
-            "## 说明\n"
-            "- 本需求文档不展开验收标准；验证方法、数据准备和证据要求统一维护在验收方案中。\n"
+            "## L1 候选\n"
+            "- 待人工确认的稳定产品语义、核心对象、职责边界和长期规则。\n\n"
+            "## 非 L1 内容\n"
+            "- 交付范围、实现提示、项目落地、治理规则和本地现场材料不得写入正式产品定义。\n\n"
+            "## 冲突规则\n"
+            "- 下层只能报告 delta 或 drift，不能反向改写 L1。\n"
         )
-    if stage == "Dev" and artifact_name == "technical_plan.md":
+    if stage == "ProjectRuntime":
         return (
-            "# 技术方案\n\n"
+            "# Project Landing Delta\n\n"
+            "## L3 默认做法\n"
+            "- 记录本项目如何承载、组织、启动、打包和默认运行该产品。\n\n"
+            "## 不属于 L3\n"
+            "- 不重写 L1 产品语义。\n"
+            "- 不伪装成 L4 共享协作治理规则。\n"
+        )
+    if stage == "TechnicalDesign":
+        return (
+            "# Technical Design\n\n"
             "## 执行流程\n\n"
             "```mermaid\n"
             "flowchart TD\n"
-            "    A[读取已确认需求方案和验收方案] --> B[识别最小变更范围]\n"
-            "    B --> C[完成实现]\n"
-            "    C --> D[运行验证命令]\n"
+            "    A[读取 Route 和 L1/L3 delta] --> B[识别 L2 影响范围]\n"
+            "    B --> C[设计实现步骤]\n"
+            "    C --> D[定义验证命令和回滚策略]\n"
             "```\n\n"
             "## 变更范围\n\n"
             "| 项目 | 内容 |\n"
             "| --- | --- |\n"
-            "| 实现策略 | 按已确认 PRD 做最小必要改动 |\n"
-            "| 影响模块 | Dev 阶段根据仓库结构确认 |\n"
+            "| 实现策略 | 服从已确认 L1/L3 delta，更新 L2 实现现实 |\n"
+            "| 影响模块 | Implementation 阶段根据仓库结构确认 |\n"
             "| 验证命令 | `agent-team runtime dry-run` |\n"
             "| 预期结果 | passed |\n"
         )
-    if stage == "Dev":
+    if stage == "Implementation":
         return (
             "# Implementation\n\n"
             "## Change Summary\n"
-            "- Runtime driver dry-run produced a valid Dev handoff.\n\n"
+            "- Runtime driver dry-run produced a valid Implementation handoff.\n\n"
             "## Self Code Review\n"
-            "- Reviewed the dry-run handoff content and found no repository code changes.\n\n"
+            "- Reviewed the dry-run handoff content.\n\n"
             "## Self Verification\n"
             "- command: agent-team runtime dry-run\n"
             "- result: passed\n\n"
-            "## QA Regression Checklist\n"
+            "## Verification Checklist\n"
             "- Verify stage contract handoff artifacts.\n"
         )
-    if stage == "QA":
+    if stage == "Verification":
         return (
-            "# QA Report\n\n"
+            "# Verification Report\n\n"
             "## Decision\npassed\n\n"
             "## Independent Verification\n"
             "- command: agent-team runtime dry-run\n"
             "- result: passed\n"
         )
-    return (
+    if stage == "GovernanceReview":
+        return (
+            "# Governance Review\n\n"
+            "## Layer Boundary Result\n"
+            "- No L5 or research material was promoted to formal truth in dry-run mode.\n"
+            "- Lower-layer artifacts report deltas instead of rewriting upper-layer truth.\n\n"
+            "## Writeback Obligations\n"
+            "- Accepted L1/L3/L4 deltas require explicit canonical writeback targets before merge.\n"
+        )
+    if stage == "Acceptance":
+        return (
         "# Acceptance Report\n\n"
         "## Recommendation\nrecommended_go\n\n"
         "## Product-Level Validation\n"
-        "- Runtime driver preserved the Agent Team gates and waits for the human final decision.\n"
+        "- Runtime driver preserved five-layer gates and governance evidence.\n"
+        )
+    return (
+        "# Session Handoff\n\n"
+        "## Current State\n"
+        "- Five-layer dry-run completed through AI acceptance recommendation.\n\n"
+        "## Next Action\n"
+        "- Human Go/No-Go decision remains pending.\n\n"
+        "## Local Control\n"
+        "- Keep task/session evidence in L5; do not promote local notes to formal truth automatically.\n"
     )
 
 
 def _dry_run_supplemental_artifacts(stage: str, context: StageExecutionContext) -> dict[str, str]:
-    if stage != "Product":
-        return {}
-    return {
-        "acceptance_plan.md": (
-            "# 验收方案\n\n"
-            "## 需求文档\n"
-            "- [需求方案](product-requirements.md)\n\n"
-            f"## 验收对象\n{context.original_request_summary}\n\n"
-            "## 验收标准映射\n"
-            "- AC-001: Product 阶段生成可确认的需求方案。\n"
-            "- AC-002: Product 阶段生成独立的验收方案文档。\n"
-            "- AC-003: 后续阶段必须基于已确认的 PRD 和验收方案推进。\n\n"
-            "## 验证方法\n"
-            "- 优先验证真实用户路径，而不是只看单元测试。\n"
-            "- 服务端需求需要说明接口请求、测试数据、数据库和 Redis 等依赖的验证方式。\n"
-            "- 缺少环境、凭证、数据或依赖服务时，QA 或 Acceptance 必须标记 blocked 并说明缺口。\n\n"
-            "## 必需证据\n"
-            "- QA 需要记录独立执行的命令、请求或手工验证步骤。\n"
-            "- Acceptance 需要记录产品级验证结论以及无法验证的风险。\n"
-        )
-    }
+    return {}
 
 
 def _stage_environment(request: StageExecutionRequest) -> dict[str, str]:
@@ -1204,11 +1229,13 @@ def _build_codex_prompt(request: StageExecutionRequest) -> str:
         "the runtime driver will inject session_id, stage, contract_id, and artifact_name after you return.\n\n"
         "Do not include workflow identity or control fields such as session_id, stage, contract_id, "
         "artifact_name, current_state, or current_stage. Use status `completed` for a completed stage, "
-        "`failed` when the current stage finds defects, or `blocked` when evidence cannot be produced. Include the required "
-        "evidence item names from the contract.\n\n"
+        "`failed` when the current stage finds defects, or `blocked` when evidence cannot be produced. Every name listed "
+        "in stage_contract.evidence_requirements must appear as the exact `name` value of at least one evidence item. "
+        "You may add additional evidence items, but do not rename the required evidence items.\n\n"
+        "Put the required stage document in the JSON `artifact_content` field. Do not create or modify the required stage "
+        "artifact file in the repository working tree; the runtime driver archives artifact_content into the session artifact directory.\n\n"
         "For optional string fields use an empty string, for optional arrays use [], "
-        "and for an evidence exit_code that is not a command use null. Product must fill "
-        "acceptance_plan_content; other stages must set acceptance_plan_content to an empty string.\n"
+        "and for an evidence exit_code that is not a command use null.\n"
         "</output_rules>\n\n"
         "<artifact_writing_rules>\n"
         f"{_xml_cdata(format_instructions)}\n"
@@ -1225,38 +1252,54 @@ def _build_codex_prompt(request: StageExecutionRequest) -> str:
 
 def _stage_artifact_format_instructions(stage: str, *, required_outputs: list[str] | None = None) -> str:
     required_outputs = required_outputs or []
-    if stage == "Product":
+    if stage == "Route":
+        return (
+            "- Write artifact_content as valid JSON for route-packet.json.\n"
+            "- Include affected_layers, required_stages, baseline_sources, red_lines, and unresolved_questions.\n"
+            "- Do not implement code or rewrite product definition in Route."
+        )
+    if stage == "ProductDefinition":
         return (
             "- Write artifact_content primarily in Chinese unless the user explicitly asks for another language.\n"
-            "- artifact_content is product-requirements.md. acceptance_plan_content is acceptance_plan.md.\n"
-            "- product-requirements.md must contain a clear Markdown link to `acceptance_plan.md` and must not "
-            "duplicate acceptance criteria or verification details.\n"
-            "- acceptance_plan.md must begin with a clear Markdown link back to `product-requirements.md`.\n"
-            "- Use clear Chinese PRD headings such as `需求背景`, `目标`, `用户场景`, `边界与假设`, "
-            "`验收文档`, and `确认问题`.\n"
-            "- Keep the PRD focused on requirements, scope, risks, assumptions, and confirmation questions.\n"
-            "- Keep acceptance_plan_content focused on how to verify the requirement, including "
-            "test data, API requests, database or Redis checks, external dependencies, and blocked conditions.\n"
-            "- When human revision requests exist, fold them into the PRD's goals, user scenarios, "
-            "risks, and acceptance plan instead of only quoting them in a revision section."
+            "- artifact_content is product-definition-delta.md, not canonical product definition.\n"
+            "- Separate L1 candidates from non-L1 task content explicitly.\n"
+            "- ProductDefinition may propose stable product semantics, core objects, core operating model, "
+            "core responsibility boundaries, and long-term rules.\n"
+            "- ProductDefinition must not include implementation plans, local session notes, governance rules, "
+            "or research drafts as formal product truth."
         )
-    if stage == "Dev" and "technical_plan.md" in required_outputs:
+    if stage == "ProjectRuntime":
         return (
-            "- You are Dev, but this pass is only the technical plan approval step.\n"
-            "- Write artifact_content as technical_plan.md, primarily in Chinese unless the user asks otherwise.\n"
+            "- Write artifact_content as project-landing-delta.md.\n"
+            "- Capture only L3 project landing defaults: entrypoints, run commands, directories, packaging, "
+            "configuration, deployment shape, and project-specific runtime conventions.\n"
+            "- Do not redefine product semantics and do not create shared governance rules here."
+        )
+    if stage == "TechnicalDesign":
+        return (
+            "- Write artifact_content as technical-design.md, primarily in Chinese unless the user asks otherwise.\n"
             "- Do not edit repository source code in this pass.\n"
             "- Prefer Mermaid flowcharts for execution flow and Markdown tables for scope, file changes, "
             "interfaces, verification, risks, and rollback plans.\n"
             "- Avoid bullet lists when the same information can be expressed as a flowchart or table.\n"
             "- Include implementation approach, affected files, data/API/database/Redis considerations, "
-            "verification plan mapped to acceptance_plan.md, risks, rollback, and questions for human approval."
+            "verification plan mapped to ProductDefinition and ProjectRuntime deltas, risks, rollback, "
+            "and questions for human approval."
         )
-    if stage == "Dev":
+    if stage == "Implementation":
         return (
-            "- Treat StageExecutionContext.approved_tech_plan_content as the approved implementation plan.\n"
-            "- Implement the technical plan instead of replacing it with a new design.\n"
-            "- If approved_tech_plan_content is empty, fall back to the approved PRD and stage contract."
+            "- Treat StageExecutionContext.approved_technical_design_content as the approved technical design.\n"
+            "- Implement the technical design instead of replacing it with a new design.\n"
+            "- If approved_technical_design_content is empty, fall back to ProductDefinition, ProjectRuntime, and stage contract."
         )
+    if stage == "Verification":
+        return "- Independently verify Implementation evidence against L1, L2, L3, and the technical design."
+    if stage == "GovernanceReview":
+        return "- Check five-layer boundary violations, evidence quality, writeback obligations, and merge readiness."
+    if stage == "Acceptance":
+        return "- Recommend final Go/No-Go from product result and governance evidence; do not claim human approval."
+    if stage == "SessionHandoff":
+        return "- Preserve L5 local-control handoff, unresolved decisions, next actions, and non-promoted local material."
     return "- Write artifact_content in the most useful language for the current request and keep it concise."
 
 
@@ -1354,7 +1397,17 @@ def _validate_runtime_trace(
 def _stage_result_schema() -> dict[str, Any]:
     return {
         "type": "object",
-        "required": ["status", "artifact_content", "findings", "evidence", "summary"],
+        "required": [
+            "status",
+            "artifact_content",
+            "journal",
+            "findings",
+            "evidence",
+            "suggested_next_owner",
+            "summary",
+            "acceptance_status",
+            "blocked_reason",
+        ],
         "properties": {
             "status": {"enum": ["completed", "failed", "blocked"]},
             "artifact_content": {"type": "string"},
@@ -1363,7 +1416,19 @@ def _stage_result_schema() -> dict[str, Any]:
                 "type": "array",
                 "items": {
                     "type": "object",
-                    "required": ["source_stage", "target_stage", "issue", "severity"],
+                    "required": [
+                        "source_stage",
+                        "target_stage",
+                        "issue",
+                        "severity",
+                        "lesson",
+                        "proposed_context_update",
+                        "proposed_contract_update",
+                        "evidence",
+                        "evidence_kind",
+                        "required_evidence",
+                        "completion_signal",
+                    ],
                     "properties": {
                         "source_stage": {"type": "string"},
                         "target_stage": {"type": "string"},
@@ -1384,7 +1449,15 @@ def _stage_result_schema() -> dict[str, Any]:
                 "type": "array",
                 "items": {
                     "type": "object",
-                    "required": ["name", "kind", "summary"],
+                    "required": [
+                        "name",
+                        "kind",
+                        "summary",
+                        "artifact_path",
+                        "command",
+                        "exit_code",
+                        "producer",
+                    ],
                     "properties": {
                         "name": {"type": "string"},
                         "kind": {"type": "string"},
@@ -1400,7 +1473,6 @@ def _stage_result_schema() -> dict[str, Any]:
             "suggested_next_owner": {"type": "string"},
             "summary": {"type": "string"},
             "acceptance_status": {"type": "string"},
-            "acceptance_plan_content": {"type": "string"},
             "blocked_reason": {"type": "string"},
         },
         "additionalProperties": False,

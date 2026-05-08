@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 
 from .memory_layers import MemoryRetrievalResult, retrieve_role_memory
@@ -8,12 +9,14 @@ from .models import StageContract
 from .roles import load_role_profiles
 from .state import StateStore
 from .stage_inputs import stage_input_artifact_paths
-from .stage_policies import default_policy_registry, dev_technical_plan_policy
+from .stage_policies import default_policy_registry
 
 COMMON_FORBIDDEN_ACTIONS = [
     "must_not_change_stage_order",
     "must_not_skip_required_artifacts",
     "must_not_claim_workflow_done",
+    "must_not_rewrite_upper_layer_truth_from_lower_layer",
+    "must_not_promote_l5_or_research_to_formal_truth",
 ]
 
 
@@ -43,7 +46,7 @@ def build_stage_contract(
     roles = load_role_profiles(repo_root=repo_root, state_root=state_store.root)
     role = roles.get(stage)
     registry = default_policy_registry()
-    policy = _policy_for_stage_summary(stage=stage, summary=summary, registry=registry)
+    policy = registry.get(stage)
     retrieved_memory = retrieve_role_memory(
         state_root=state_store.root,
         role_name=stage,
@@ -79,20 +82,6 @@ def build_stage_contract(
     )
 
 
-def _policy_for_stage_summary(stage: str, summary, registry):
-    if stage == "Dev" and _dev_should_write_technical_plan(summary):
-        return dev_technical_plan_policy()
-    return registry.get(stage)
-
-
-def _dev_should_write_technical_plan(summary) -> bool:
-    if summary.current_state != "Dev":
-        return False
-    if summary.dev_status in {"planning", "pending"}:
-        return True
-    return not bool(summary.artifact_paths.get("technical_plan"))
-
-
 def _build_contract_id(
     *,
     session_id: str,
@@ -107,12 +96,10 @@ def _build_contract_id(
             stage,
             summary.current_state,
             summary.current_stage,
-            summary.prd_status,
-            summary.dev_status,
-            summary.qa_status,
+            json.dumps(summary.stage_statuses, sort_keys=True, ensure_ascii=True),
             summary.acceptance_status,
             summary.human_decision,
-            str(summary.qa_round),
+            str(summary.verification_round),
             ",".join(required_outputs),
             ",".join(evidence_requirements),
         ]

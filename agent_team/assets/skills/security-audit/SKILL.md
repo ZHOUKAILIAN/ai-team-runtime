@@ -1,7 +1,7 @@
 ---
 name: security-audit
 description: Security review for injection, secrets, unsafe parsing, and boundary validation.
-stages: [QA]
+stages: [Verification]
 ---
 
 # Security Audit

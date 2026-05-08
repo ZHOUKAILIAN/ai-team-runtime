@@ -3,12 +3,15 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from .models import AcceptanceContract, EvidenceRequirement, StageContract
+from .workflow import STAGES
 
 
 DEFAULT_FORBIDDEN_ACTIONS = [
     "must_not_change_stage_order",
     "must_not_skip_required_artifacts",
     "must_not_claim_workflow_done",
+    "must_not_rewrite_upper_layer_truth_from_lower_layer",
+    "must_not_promote_l5_or_research_to_formal_truth",
 ]
 
 
@@ -66,49 +69,88 @@ class PolicyRegistry:
         )
 
 
-def dev_technical_plan_policy() -> StagePolicy:
+def technical_design_policy() -> StagePolicy:
     return StagePolicy(
-        stage="Dev",
+        stage="TechnicalDesign",
         goal=(
-            "As Dev, draft a concrete technical implementation plan from the approved PRD and "
-            "acceptance plan without editing code, then stop for technical plan approval."
+            "Draft the Layer 2 technical design from approved ProductDefinition and ProjectRuntime deltas, "
+            "current implementation reality, and route constraints. Do not edit product code in this stage."
         ),
-        required_outputs=["technical_plan.md"],
+        required_outputs=["technical-design.md"],
         evidence_specs=[
             EvidenceRequirement(
-                name="implementation_plan",
+                name="technical_design_plan",
                 allowed_kinds=["artifact", "report"],
                 required_fields=["summary"],
             )
         ],
-        approval_rule="requires_technical_plan_approval",
+        approval_rule="requires_technical_design_approval",
         allow_findings=False,
     )
+
+
+def technical_design_stage_policy() -> StagePolicy:
+    return technical_design_policy()
 
 
 def default_policy_registry() -> PolicyRegistry:
     return PolicyRegistry(
         [
             StagePolicy(
-                stage="Product",
+                stage="Route",
                 goal=(
-                    "Draft a PRD that links to a separate acceptance plan, write that acceptance plan with a "
-                    "back-link to the PRD and concrete verification steps, then stop for requirements approval."
+                    "Classify the request into affected five-layer responsibilities, red lines, baseline sources, "
+                    "and required stages. This is routing and governance classification, not implementation."
                 ),
-                required_outputs=["product-requirements.md", "acceptance_plan.md"],
+                required_outputs=["route-packet.json"],
                 evidence_specs=[
                     EvidenceRequirement(
-                        name="explicit_acceptance_plan",
+                        name="route_classification",
                         allowed_kinds=["artifact", "report"],
                         required_fields=["summary"],
                     )
                 ],
-                approval_rule="requires_requirements_approval",
                 allow_findings=False,
             ),
             StagePolicy(
-                stage="Dev",
-                goal="Implement the approved PRD, review the changed code, and provide self-verification evidence.",
+                stage="ProductDefinition",
+                goal=(
+                    "Extract Layer 1 product-definition candidates from the request, explicitly separate non-L1 "
+                    "task content, and stop for product-definition approval."
+                ),
+                required_outputs=["product-definition-delta.md"],
+                evidence_specs=[
+                    EvidenceRequirement(
+                        name="l1_classification",
+                        allowed_kinds=["artifact", "report"],
+                        required_fields=["summary"],
+                    )
+                ],
+                approval_rule="requires_product_definition_approval",
+                allow_findings=False,
+            ),
+            StagePolicy(
+                stage="ProjectRuntime",
+                goal=(
+                    "Capture Layer 3 project landing deltas: default entrypoints, run commands, layout, packaging, "
+                    "configuration, and project-specific runtime defaults. Do not redefine product semantics."
+                ),
+                required_outputs=["project-landing-delta.md"],
+                evidence_specs=[
+                    EvidenceRequirement(
+                        name="project_landing_review",
+                        allowed_kinds=["artifact", "report"],
+                        required_fields=["summary"],
+                    )
+                ],
+            ),
+            technical_design_policy(),
+            StagePolicy(
+                stage="Implementation",
+                goal=(
+                    "Implement the approved technical design as Layer 2 product implementation reality, then "
+                    "provide code review and self-verification evidence."
+                ),
                 required_outputs=["implementation.md"],
                 evidence_specs=[
                     EvidenceRequirement(
@@ -122,12 +164,15 @@ def default_policy_registry() -> PolicyRegistry:
                         required_fields=["summary"],
                     )
                 ],
-                failback_targets=["Dev"],
+                failback_targets=["Implementation"],
             ),
             StagePolicy(
-                stage="QA",
-                goal="Independently rerun critical verification and report passed, failed, or blocked.",
-                required_outputs=["qa_report.md"],
+                stage="Verification",
+                goal=(
+                    "Independently verify the implementation against approved L1/L3 deltas, technical design, "
+                    "and current implementation reality."
+                ),
+                required_outputs=["verification-report.md"],
                 evidence_specs=[
                     EvidenceRequirement(
                         name="independent_verification",
@@ -135,20 +180,54 @@ def default_policy_registry() -> PolicyRegistry:
                         required_fields=["summary"],
                     )
                 ],
-                failback_targets=["Dev"],
+                failback_targets=["Implementation"],
             ),
             StagePolicy(
-                stage="Acceptance",
-                goal="Validate user-visible behavior against the approved acceptance plan.",
-                required_outputs=["acceptance_report.md"],
+                stage="GovernanceReview",
+                goal=(
+                    "Review the run for five-layer boundary violations, evidence quality, writeback obligations, "
+                    "public/private risk, and merge readiness."
+                ),
+                required_outputs=["governance-review.md"],
                 evidence_specs=[
                     EvidenceRequirement(
-                        name="product_level_validation",
+                        name="layer_governance_review",
                         allowed_kinds=["artifact", "report"],
                         required_fields=["summary"],
                     )
                 ],
-                failback_targets=["Product", "Dev"],
+                failback_targets=["Route", "ProductDefinition", "ProjectRuntime", "TechnicalDesign", "Implementation"],
+            ),
+            StagePolicy(
+                stage="Acceptance",
+                goal=(
+                    "Recommend final Go/No-Go from product result and governance evidence. Do not claim the human "
+                    "decision."
+                ),
+                required_outputs=["acceptance-report.md"],
+                evidence_specs=[
+                    EvidenceRequirement(
+                        name="product_and_governance_validation",
+                        allowed_kinds=["artifact", "report"],
+                        required_fields=["summary"],
+                    )
+                ],
+                failback_targets=["ProductDefinition", "TechnicalDesign", "Implementation", "GovernanceReview"],
+            ),
+            StagePolicy(
+                stage="SessionHandoff",
+                goal=(
+                    "Preserve Layer 5 local control state: current session facts, next action, unresolved decisions, "
+                    "and non-promoted local material."
+                ),
+                required_outputs=["session-handoff.md"],
+                evidence_specs=[
+                    EvidenceRequirement(
+                        name="local_control_handoff",
+                        allowed_kinds=["artifact", "report"],
+                        required_fields=["summary"],
+                    )
+                ],
             ),
         ]
     )

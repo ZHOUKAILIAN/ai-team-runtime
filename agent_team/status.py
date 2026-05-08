@@ -33,13 +33,15 @@ def _project_name(*, state_root: Path, repo_root: Path | None) -> str:
 
 
 def _status(summary: WorkflowSummary) -> str:
-    if summary.blocked_reason or summary.acceptance_status == "blocked" or summary.qa_status == "blocked":
+    if (
+        summary.blocked_reason
+        or summary.acceptance_status == "blocked"
+        or any(status == "blocked" for status in summary.stage_statuses.values())
+    ):
         return "blocked"
     if summary.current_state in {
-        "WaitForCEOApproval",
-        "WaitForTechnicalPlanApproval",
-        "WaitForDevApproval",
-        "WaitForQAApproval",
+        "WaitForProductDefinitionApproval",
+        "WaitForTechnicalDesignApproval",
         "WaitForHumanDecision",
     }:
         return "waiting"
@@ -53,14 +55,10 @@ def _status(summary: WorkflowSummary) -> str:
 def _status_detail(summary: WorkflowSummary) -> str:
     if summary.blocked_reason:
         return summary.blocked_reason
-    if summary.current_state == "WaitForCEOApproval":
-        return "Waiting for CEO approval."
-    if summary.current_state == "WaitForTechnicalPlanApproval":
-        return "Waiting for technical plan approval."
-    if summary.current_state == "WaitForDevApproval":
-        return "Waiting for Dev approval."
-    if summary.current_state == "WaitForQAApproval":
-        return "Waiting for QA approval."
+    if summary.current_state == "WaitForProductDefinitionApproval":
+        return "Waiting for product-definition approval."
+    if summary.current_state == "WaitForTechnicalDesignApproval":
+        return "Waiting for technical-design approval."
     if summary.current_state == "WaitForHumanDecision":
         return "Waiting for human Go/No-Go decision."
     if summary.acceptance_status in {"recommended_go", "recommended_no_go"}:

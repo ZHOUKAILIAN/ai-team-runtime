@@ -12,16 +12,16 @@ class SkillRegistryTests(unittest.TestCase):
         with TemporaryDirectory() as temp_dir:
             registry = SkillRegistry(Path(temp_dir))
 
-            dev_skills = registry.list_skills(stage="Dev")
-            qa_skills = registry.list_skills(stage="QA")
+            implementation_skills = registry.list_skills(stage="Implementation")
+            verification_skills = registry.list_skills(stage="Verification")
 
-        self.assertIn("plan", {skill.name for skill in dev_skills})
-        self.assertIn("security-audit", {skill.name for skill in qa_skills})
+        self.assertIn("plan", {skill.name for skill in implementation_skills})
+        self.assertIn("security-audit", {skill.name for skill in verification_skills})
 
     def test_project_skill_overrides_builtin_by_name(self) -> None:
         with TemporaryDirectory() as temp_dir:
             repo_root = Path(temp_dir)
-            skill_dir = repo_root / "Dev" / "skills" / "plan"
+            skill_dir = repo_root / "Implementation" / "skills" / "plan"
             skill_dir.mkdir(parents=True)
             (skill_dir / "SKILL.md").write_text(
                 """---
@@ -34,23 +34,23 @@ description: Project plan
             )
             registry = SkillRegistry(repo_root)
 
-            skill = registry.get_skill("plan", stage="Dev")
+            skill = registry.get_skill("plan", stage="Implementation")
 
         self.assertIsNotNone(skill)
         assert skill is not None
         self.assertEqual(skill.source, "project")
         self.assertIn("Project Plan", skill.content)
 
-    def test_project_skill_discovery_supports_product_stage(self) -> None:
+    def test_project_skill_discovery_supports_product_definition_stage(self) -> None:
         with TemporaryDirectory() as temp_dir:
             repo_root = Path(temp_dir)
-            skill_dir = repo_root / "Product" / "skills" / "intake-review"
+            skill_dir = repo_root / "ProductDefinition" / "skills" / "intake-review"
             skill_dir.mkdir(parents=True)
             (skill_dir / "SKILL.md").write_text(
                 """---
 name: intake-review
-description: Product intake review
-stage: Product
+description: ProductDefinition intake review
+stage: ProductDefinition
 ---
 
 # Intake Review
@@ -58,7 +58,7 @@ stage: Product
             )
             registry = SkillRegistry(repo_root)
 
-            skills = registry.list_skills(stage="Product", source="project")
+            skills = registry.list_skills(stage="ProductDefinition", source="project")
 
         self.assertEqual([skill.name for skill in skills], ["intake-review"])
         self.assertEqual(skills[0].source, "project")
@@ -72,7 +72,7 @@ stage: Product
                 """---
 name: cst
 description: Customer troubleshooting
-stage: QA
+stage: Verification
 ---
 
 # CST
@@ -80,26 +80,26 @@ stage: QA
             )
             with patch.dict(os.environ, {"AGENT_TEAM_SKILL_PATH": personal_dir}):
                 registry = SkillRegistry(Path(temp_dir))
-                skills = registry.list_skills(stage="QA", source="personal")
+                skills = registry.list_skills(stage="Verification", source="personal")
 
         self.assertEqual([skill.name for skill in skills], ["cst"])
 
     def test_preferences_record_last_and_frequency(self) -> None:
         with TemporaryDirectory() as temp_dir:
             registry = SkillRegistry(Path(temp_dir))
-            registry.record("Dev", ["plan"])
-            registry.record("Dev", ["plan"])
+            registry.record("Implementation", ["plan"])
+            registry.record("Implementation", ["plan"])
 
             prefs = registry.load_preferences()
 
-        self.assertEqual(prefs.last["dev"], ["plan"])
-        self.assertEqual(prefs.frequent["dev"]["plan"], 2)
+        self.assertEqual(prefs.last["implementation"], ["plan"])
+        self.assertEqual(prefs.frequent["implementation"]["plan"], 2)
         self.assertFalse(prefs.is_first_time)
 
     def test_empty_selection_still_initializes_preferences(self) -> None:
         with TemporaryDirectory() as temp_dir:
             registry = SkillRegistry(Path(temp_dir))
-            registry.record("Dev", [])
+            registry.record("Implementation", [])
 
             prefs = registry.load_preferences()
 
@@ -126,10 +126,10 @@ stage: QA
 
     def test_skill_preferences_format_last_uses_defaults_first(self) -> None:
         prefs = SkillPreferences()
-        prefs.last["dev"] = ["last"]
-        prefs.defaults["dev"] = ["default"]
+        prefs.last["implementation"] = ["last"]
+        prefs.defaults["implementation"] = ["default"]
 
-        self.assertEqual(prefs.format_last("Dev"), "default")
+        self.assertEqual(prefs.format_last("Implementation"), "default")
 
     def test_load_preferences_accepts_inline_yaml_lists(self) -> None:
         with TemporaryDirectory() as temp_dir:
@@ -138,7 +138,7 @@ stage: QA
             pref_path.parent.mkdir()
             pref_path.write_text(
                 """initialized: true
-dev:
+implementation:
   last: [plan]
   defaults: [refactor-checklist]
   frequent:
@@ -150,9 +150,9 @@ dev:
             prefs = registry.load_preferences()
 
         self.assertTrue(prefs.initialized)
-        self.assertEqual(prefs.last["dev"], ["plan"])
-        self.assertEqual(prefs.defaults["dev"], ["refactor-checklist"])
-        self.assertEqual(prefs.frequent["dev"]["plan"], 3)
+        self.assertEqual(prefs.last["implementation"], ["plan"])
+        self.assertEqual(prefs.defaults["implementation"], ["refactor-checklist"])
+        self.assertEqual(prefs.frequent["implementation"]["plan"], 3)
 
 
 if __name__ == "__main__":

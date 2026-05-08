@@ -85,17 +85,20 @@ def _normalize_finding(item: Finding | dict[str, str]) -> Finding:
 
 
 def _build_workflow_status_section(workflow_summary: WorkflowSummary) -> list[str]:
-    return [
+    lines = [
         "## Workflow Status",
         "",
         f"runtime_mode: {workflow_summary.runtime_mode}",
         f"current_state: {workflow_summary.current_state}",
         f"current_stage: {workflow_summary.current_stage}",
-        f"prd_status: {workflow_summary.prd_status}",
-        f"dev_status: {workflow_summary.dev_status}",
-        f"qa_status: {workflow_summary.qa_status}",
         f"acceptance_status: {workflow_summary.acceptance_status}",
         f"human_decision: {workflow_summary.human_decision}",
-        f"qa_round: {workflow_summary.qa_round}",
+        f"verification_round: {workflow_summary.verification_round}",
         "",
     ]
+    if workflow_summary.stage_statuses:
+        lines.extend(["stage_statuses:", ""])
+        for stage, status in workflow_summary.stage_statuses.items():
+            lines.append(f"- {stage}: {status}")
+        lines.append("")
+    return lines

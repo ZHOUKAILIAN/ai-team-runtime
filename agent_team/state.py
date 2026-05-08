@@ -18,19 +18,15 @@ from .models import (
     WorkflowSummary,
 )
 from .memory_layers import record_learning_layers
+from .workflow import STAGE_SLUGS, STAGES, artifact_name_for, stage_slug
 
-VALID_ROLE_NAMES = {"Product", "Dev", "QA", "Acceptance"}
+VALID_ROLE_NAMES = set(STAGES)
 ACTIVE_STAGE_RUN_STATES = {"READY", "RUNNING", "SUBMITTED", "VERIFYING"}
 TERMINAL_STAGE_RUN_STATES = {"PASSED", "FAILED", "BLOCKED"}
-STAGE_SLUGS = {
-    "Product": "product",
-    "Dev": "dev",
-    "QA": "qa",
-    "Acceptance": "acceptance",
-    "Ops": "operations",
-}
 
 _LEGACY_SLUGS = {
+    "Product": "product",
+    "Acceptance": "acceptance",
     "Dev": "development",
     "QA": "quality-assurance",
 }
@@ -205,17 +201,29 @@ class StateStore:
     def _workflow_summary_from_dict(self, payload: dict[str, object], *, session_id: str) -> WorkflowSummary:
         artifact_paths_value = payload.get("artifact_paths", {})
         artifact_paths = artifact_paths_value if isinstance(artifact_paths_value, dict) else {}
+        raw_stage_statuses = payload.get("stage_statuses", {})
+        stage_statuses = (
+            {str(key): str(value) for key, value in raw_stage_statuses.items()}
+            if isinstance(raw_stage_statuses, dict)
+            else {}
+        )
+        legacy_status_map = {
+            "ProductDefinition": payload.get("prd_status"),
+            "Implementation": payload.get("dev_status"),
+            "Verification": payload.get("qa_status"),
+        }
+        for stage, status in legacy_status_map.items():
+            if status is not None and stage not in stage_statuses:
+                stage_statuses[stage] = str(status)
         return WorkflowSummary(
             session_id=str(payload.get("session_id", session_id)),
             runtime_mode=str(payload.get("runtime_mode", "session_bootstrap")),
             current_state=str(payload.get("current_state", "Intake")),
             current_stage=str(payload.get("current_stage", "Intake")),
-            prd_status=str(payload.get("prd_status", "pending")),
-            dev_status=str(payload.get("dev_status", "pending")),
-            qa_status=str(payload.get("qa_status", "pending")),
+            stage_statuses=stage_statuses,
             acceptance_status=str(payload.get("acceptance_status", "pending")),
             human_decision=str(payload.get("human_decision", "pending")),
-            qa_round=int(payload.get("qa_round", 0) or 0),
+            verification_round=int(payload.get("verification_round", payload.get("qa_round", 0)) or 0),
             blocked_reason=str(payload.get("blocked_reason", "")),
             artifact_paths={str(key): str(value) for key, value in artifact_paths.items()},
         )
@@ -1052,13 +1060,7 @@ class StateStore:
         return artifact_paths
 
 def artifact_name_for_stage(stage: str) -> str:
-    return {
-        "Product": "product-requirements.md",
-        "Dev": "implementation.md",
-        "QA": "qa_report.md",
-        "Acceptance": "acceptance_report.md",
-        "Ops": "release_notes.md",
-    }.get(stage, f"{stage.lower()}.md")
+    return artifact_name_for(stage)
 
 
 def _slugify(text: str) -> str:
@@ -1067,7 +1069,7 @@ def _slugify(text: str) -> str:
 
 
 def _stage_slug(stage: str) -> str:
-    return STAGE_SLUGS.get(stage, _slugify(stage))
+    return STAGE_SLUGS.get(stage, stage_slug(stage))
 
 
 def _attempt_dir_name(attempt: int) -> str:

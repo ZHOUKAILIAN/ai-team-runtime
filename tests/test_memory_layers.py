@@ -19,14 +19,14 @@ class MemoryLayerTests(unittest.TestCase):
             root = Path(temp_dir)
             StateStore(root).apply_learning(
                 Finding(
-                    source_stage="Acceptance",
-                    target_stage="Dev",
+                    source_stage="SessionHandoff",
+                    target_stage="Implementation",
                     issue="Acceptance found missing empty-state evidence.",
                     severity="high",
                     lesson="Preserve empty-state validation in regression coverage.",
                     proposed_context_update="Review empty-state behavior before handoff.",
                     proposed_contract_update="Require visible empty-state evidence before reporting success.",
-                    evidence="acceptance_report.md",
+                    evidence="session-handoff.md",
                     evidence_kind="artifact",
                     required_evidence=["empty_state_screenshot"],
                     completion_signal="Attach empty-state screenshot evidence.",
@@ -35,18 +35,18 @@ class MemoryLayerTests(unittest.TestCase):
 
             raw_records = [
                 json.loads(line)
-                for line in (root / "memory" / "Dev" / "raw" / "findings.jsonl").read_text().splitlines()
+                for line in (root / "memory" / "Implementation" / "raw" / "findings.jsonl").read_text().splitlines()
             ]
             graph_records = [
                 json.loads(line)
-                for line in (root / "memory" / "Dev" / "graph" / "relations.jsonl").read_text().splitlines()
+                for line in (root / "memory" / "Implementation" / "graph" / "relations.jsonl").read_text().splitlines()
             ]
-            extracted_lesson = (root / "memory" / "Dev" / "extracted" / "lessons.md").read_text()
+            extracted_lesson = (root / "memory" / "Implementation" / "extracted" / "lessons.md").read_text()
 
         self.assertEqual(raw_records[0]["record_type"], "finding")
         self.assertEqual(raw_records[0]["finding"]["issue"], "Acceptance found missing empty-state evidence.")
         self.assertIn("Preserve empty-state validation", extracted_lesson)
-        self.assertIn("Acceptance->Dev", {record["edge"] for record in graph_records})
+        self.assertIn("SessionHandoff->Implementation", {record["edge"] for record in graph_records})
         self.assertIn("issue->required_evidence", {record["edge"] for record in graph_records})
 
     def test_keyword_retrieval_searches_memory_layers_before_graph_reasoning(self) -> None:
@@ -58,17 +58,17 @@ class MemoryLayerTests(unittest.TestCase):
             root = Path(temp_dir)
             StateStore(root).apply_learning(
                 Finding(
-                    source_stage="QA",
-                    target_stage="Dev",
+                    source_stage="Verification",
+                    target_stage="Implementation",
                     issue="Missing pagination retry evidence.",
-                    lesson="Keep pagination retry checks in Dev self-verification.",
+                    lesson="Keep pagination retry checks in Implementation self-verification.",
                     proposed_context_update="Search previous pagination findings before implementation.",
                 )
             )
 
             result = retrieve_role_memory(
                 state_root=root,
-                role_name="Dev",
+                role_name="Implementation",
                 query="pagination retry",
                 max_results=5,
             )
@@ -89,10 +89,10 @@ class MemoryLayerTests(unittest.TestCase):
             session = store.create_session("Build pagination retry support.", runtime_mode="runtime_driver")
             store.apply_learning(
                 Finding(
-                    source_stage="QA",
-                    target_stage="Dev",
+                    source_stage="Verification",
+                    target_stage="Implementation",
                     issue="Missing pagination retry evidence.",
-                    lesson="Keep pagination retry checks in Dev self-verification.",
+                    lesson="Keep pagination retry checks in Implementation self-verification.",
                 )
             )
 
@@ -100,7 +100,7 @@ class MemoryLayerTests(unittest.TestCase):
                 repo_root=repo_root,
                 state_store=store,
                 session_id=session.session_id,
-                stage="Dev",
+                stage="Implementation",
             )
 
         self.assertIn("Relevant Memory (CLI Keyword Retrieval)", contract.role_context)

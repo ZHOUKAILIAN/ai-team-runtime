@@ -8,6 +8,7 @@ from typing import Any
 from .harness_paths import _default_codex_home
 from .models import GateResult, StageRunRecord, model_dataclass
 from .state import StateStore
+from .workflow import WAIT_STATES
 from .workspace_metadata import WorkspaceMetadata, load_workspace_metadata
 
 
@@ -55,7 +56,7 @@ def build_board_snapshot_with_roots(*, codex_home: Path | None = None) -> BoardS
             stats["sessions"] += 1
             if session_payload["current_state"] == "Blocked":
                 stats["blocked"] += 1
-            if session_payload["current_state"] in {"WaitForCEOApproval", "WaitForHumanDecision"}:
+            if session_payload["current_state"] in WAIT_STATES:
                 stats["waiting_human"] += 1
             active_run = session_payload.get("active_run") or {}
             if active_run.get("state") == "SUBMITTED":
@@ -136,7 +137,7 @@ def _workflow_status(current_state: str) -> str:
         return "done"
     if current_state == "Blocked":
         return "blocked"
-    if current_state in {"WaitForCEOApproval", "WaitForHumanDecision"}:
+    if current_state in WAIT_STATES:
         return "waiting_human"
     return "in_progress"
 

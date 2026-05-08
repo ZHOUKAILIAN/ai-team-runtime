@@ -6,50 +6,48 @@ from pathlib import Path
 
 from .models import model_dataclass
 from .packaged_assets import packaged_text
+from .workflow import STAGE_SLUGS, STAGES
 
 
 DEFAULT_DOC_MAP = {
-    "requirements": "docs/requirements",
-    "designs": "docs/designs",
-    "workflow_specs": "docs/workflow-specs",
-    "standards": "docs/standards",
+    "product_definition": "docs/product-definition",
+    "project_runtime": "docs/project-runtime",
+    "technical_design": "docs/technical-design",
+    "governance": "docs/governance",
 }
+
+MODERN_DOC_MAP_KEYS = frozenset(DEFAULT_DOC_MAP)
+LEGACY_DOC_MAP_KEYS = frozenset({"requirements", "designs", "workflow_specs", "standards"})
 
 DOC_CANDIDATES = {
-    "requirements": (
-        "docs/requirements",
-        "docs/requirement",
-        "docs/prd",
-        "docs/prds",
-        "requirements",
+    "product_definition": (
+        "docs/product-definition",
+        "docs/product-definitions",
+        "docs/product",
+        "product-definition",
     ),
-    "designs": (
-        "docs/designs",
-        "docs/design",
+    "project_runtime": (
+        "docs/project-runtime",
+        "docs/runtime",
+        "docs/project",
+    ),
+    "technical_design": (
         "docs/technical-design",
         "docs/tech-design",
+        "docs/designs",
+        "docs/design",
         "docs/architecture",
-        "designs",
     ),
-    "workflow_specs": (
-        "docs/workflow-specs",
-        "docs/workflow",
-        "docs/workflows",
-    ),
-    "standards": (
+    "governance": (
+        "docs/governance",
         "docs/standards",
-        "docs/guidelines",
-        "docs/conventions",
+        "docs/workflow",
+        "docs/workflow-specs",
     ),
 }
 
-ROLE_SLUGS = {
-    "Product": "product",
-    "Dev": "dev",
-    "QA": "qa",
-    "Acceptance": "acceptance",
-}
-DEPRECATED_ROLE_SLUGS = ("techplan", "ops")
+ROLE_SLUGS = dict(STAGE_SLUGS)
+DEPRECATED_ROLE_SLUGS = ("product", "dev", "qa", "techplan", "ops")
 
 
 @model_dataclass
@@ -86,8 +84,7 @@ def detect_project_structure(repo_root: Path) -> ProjectStructure:
     doc_map_path = project_root / "doc-map.json"
     existing_doc_map = _read_doc_map(doc_map_path)
     if existing_doc_map:
-        doc_map = existing_doc_map
-        used_default_docs = False
+        doc_map, used_default_docs = _modernize_existing_doc_map(existing_doc_map)
     else:
         doc_map = detect_doc_map(repo_root)
         used_default_docs = not doc_map
@@ -127,7 +124,8 @@ def ensure_project_structure(repo_root: Path) -> ProjectStructure:
     if structure.used_default_docs:
         roles_dir = structure.project_root / "roles"
         roles_dir.mkdir(parents=True, exist_ok=True)
-        for role_name, slug in ROLE_SLUGS.items():
+        for role_name in STAGES:
+            slug = ROLE_SLUGS[role_name]
             _ensure_text(
                 roles_dir / f"{slug}.context.md",
                 packaged_text("roles", role_name, "context.md"),
@@ -183,6 +181,17 @@ def _read_doc_map(path: Path) -> dict[str, str]:
     if not isinstance(payload, dict):
         return {}
     return {str(key): str(value) for key, value in payload.items() if isinstance(value, str)}
+
+
+def _modernize_existing_doc_map(doc_map: dict[str, str]) -> tuple[dict[str, str], bool]:
+    modern_entries = {key: value for key, value in doc_map.items() if key in MODERN_DOC_MAP_KEYS}
+    if modern_entries:
+        merged = dict(DEFAULT_DOC_MAP)
+        merged.update(modern_entries)
+        return merged, False
+    if set(doc_map).intersection(LEGACY_DOC_MAP_KEYS):
+        return dict(DEFAULT_DOC_MAP), True
+    return doc_map, False
 
 
 def _write_doc_map(path: Path, doc_map: dict[str, str]) -> None:

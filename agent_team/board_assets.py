@@ -100,7 +100,7 @@ BOARD_HTML = """<!doctype html>
     .PASSED, .Done { background: var(--green); }
     .FAILED { background: var(--red); }
     .BLOCKED, .Blocked { background: var(--deep-red); }
-    .WaitForCEOApproval, .WaitForHumanDecision { background: var(--yellow); color: #1b1308; }
+    .WaitForProductDefinitionApproval, .WaitForTechnicalDesignApproval, .WaitForHumanDecision { background: var(--yellow); color: #1b1308; }
     pre {
       white-space: pre-wrap;
       max-height: 300px;
@@ -300,13 +300,33 @@ BOARD_HTML = """<!doctype html>
     let board = null;
     let selectedSessionId = null;
     let currentFilter = 'all';
-    const stages = ['Product', 'WaitForCEOApproval', 'Dev', 'QA', 'Acceptance', 'WaitForHumanDecision', 'Done'];
+    const stages = [
+      'Route',
+      'ProductDefinition',
+      'WaitForProductDefinitionApproval',
+      'ProjectRuntime',
+      'TechnicalDesign',
+      'WaitForTechnicalDesignApproval',
+      'Implementation',
+      'Verification',
+      'GovernanceReview',
+      'Acceptance',
+      'SessionHandoff',
+      'WaitForHumanDecision',
+      'Done'
+    ];
     const workflowStageDefinitions = [
-      { key: 'Product', title: 'Product', owner: 'Product' },
-      { key: 'WaitForCEOApproval', title: 'CEO 审批', owner: 'CEO / Human' },
-      { key: 'Dev', title: 'Dev', owner: 'Dev' },
-      { key: 'QA', title: 'QA', owner: 'QA' },
+      { key: 'Route', title: 'Route', owner: 'Router' },
+      { key: 'ProductDefinition', title: 'ProductDefinition / L1', owner: 'ProductDefinition' },
+      { key: 'WaitForProductDefinitionApproval', title: 'L1 人工审批', owner: 'Human' },
+      { key: 'ProjectRuntime', title: 'ProjectRuntime / L3', owner: 'ProjectRuntime' },
+      { key: 'TechnicalDesign', title: 'TechnicalDesign / L2', owner: 'TechnicalDesign' },
+      { key: 'WaitForTechnicalDesignApproval', title: '设计人工审批', owner: 'Human' },
+      { key: 'Implementation', title: 'Implementation / L2', owner: 'Implementation' },
+      { key: 'Verification', title: 'Verification / L2', owner: 'Verification' },
+      { key: 'GovernanceReview', title: 'GovernanceReview / L4', owner: 'GovernanceReview' },
       { key: 'Acceptance', title: 'Acceptance', owner: 'Acceptance' },
+      { key: 'SessionHandoff', title: 'SessionHandoff / L5', owner: 'SessionHandoff' },
       { key: 'WaitForHumanDecision', title: '最终人工决策', owner: 'Human' },
       { key: 'Done', title: 'Done', owner: 'System' }
     ];
@@ -487,7 +507,11 @@ BOARD_HTML = """<!doctype html>
         if (session.active_run && session.active_run.stage === stageKey) {
           return currentNodeStateFromRun(stageKey, session.active_run, hasDeliverables);
         }
-        if (stageKey === 'WaitForCEOApproval' || stageKey === 'WaitForHumanDecision') {
+        if (
+          stageKey === 'WaitForProductDefinitionApproval'
+          || stageKey === 'WaitForTechnicalDesignApproval'
+          || stageKey === 'WaitForHumanDecision'
+        ) {
           return {
             statusLabel: '等待人工确认',
             reason: waitingHumanReason(stageKey),
@@ -614,25 +638,50 @@ BOARD_HTML = """<!doctype html>
           title: '验收约束',
           description: '这条需求的验收条件、证据要求和边界规则。'
         },
-        product: {
+        route: {
           category: 'business',
-          title: '产品方案 / PRD',
-          description: 'Product 阶段产出的需求方案和验收标准。'
+          title: 'Route Packet',
+          description: 'Route 阶段产出的层级影响、红线和下游执行路由。'
         },
-        dev: {
+        product_definition: {
           category: 'business',
-          title: '实现说明',
-          description: 'Dev 阶段产出的实现计划或交付说明。'
+          title: 'L1 产品定义增量',
+          description: 'ProductDefinition 阶段产出的产品定义增量和需要审批的语义变化。'
         },
-        qa: {
+        project_runtime: {
           category: 'business',
-          title: 'QA 验证结果',
-          description: 'QA 阶段产出的验证结论、风险和证据。'
+          title: 'L3 项目落地增量',
+          description: 'ProjectRuntime 阶段产出的默认入口、工件落点和项目承载约定。'
+        },
+        technical_design: {
+          category: 'business',
+          title: 'L2 技术设计',
+          description: 'TechnicalDesign 阶段产出的实现方案、接口和验证计划。'
+        },
+        implementation: {
+          category: 'business',
+          title: 'L2 实现交付',
+          description: 'Implementation 阶段产出的实现说明、变更证据和自检结果。'
+        },
+        verification: {
+          category: 'business',
+          title: 'L2 独立验证',
+          description: 'Verification 阶段产出的复跑结果、风险和回流建议。'
+        },
+        governance_review: {
+          category: 'business',
+          title: 'L4 治理审查',
+          description: 'GovernanceReview 阶段产出的五层边界、门禁和收口检查结论。'
         },
         acceptance: {
           category: 'business',
           title: '验收建议',
           description: 'Acceptance 阶段产出的产品级验收建议。'
+        },
+        session_handoff: {
+          category: 'runtime',
+          title: 'L5 Session Handoff',
+          description: 'SessionHandoff 阶段产出的本地现场恢复、下一步动作和连续性信息。'
         }
       };
       const known = metadata[key] || {
@@ -678,7 +727,11 @@ BOARD_HTML = """<!doctype html>
           tone: 'active'
         };
       }
-      if (session.current_state === 'WaitForCEOApproval' || session.current_state === 'WaitForHumanDecision') {
+      if (
+        session.current_state === 'WaitForProductDefinitionApproval'
+        || session.current_state === 'WaitForTechnicalDesignApproval'
+        || session.current_state === 'WaitForHumanDecision'
+      ) {
         return {
           headline: `当前等待${workflowOwnerFor(session.current_state)}决策。`,
           reason: waitingHumanReason(session.current_state),
@@ -705,7 +758,7 @@ BOARD_HTML = """<!doctype html>
       return {
         headline: '当前还在 Intake。',
         reason: '这条 session 还没有进入可执行的 workflow 节点。',
-        nextAction: '先由 Product 开始产出 PRD。',
+        nextAction: '先由 Route 分类层级影响，再进入 ProductDefinition。',
         tone: 'waiting'
       };
     }
@@ -722,7 +775,8 @@ BOARD_HTML = """<!doctype html>
       if (filterKey === 'empty') return isEmptySession(session);
       if (filterKey === 'has_run') return Boolean(session.active_run);
       if (filterKey === 'waiting_human') return session.workflow_status === 'waiting_human'
-        || session.current_state === 'WaitForCEOApproval'
+        || session.current_state === 'WaitForProductDefinitionApproval'
+        || session.current_state === 'WaitForTechnicalDesignApproval'
         || session.current_state === 'WaitForHumanDecision';
       if (filterKey === 'active') return !isEmptySession(session) && session.current_state !== 'Done';
       return true;
@@ -775,22 +829,25 @@ BOARD_HTML = """<!doctype html>
     }
 
     function waitingHumanReason(stageKey) {
-      if (stageKey === 'WaitForCEOApproval') {
-        return 'Product 已产出，需要人工确认是否进入研发。';
+      if (stageKey === 'WaitForProductDefinitionApproval') {
+        return 'ProductDefinition 已产出 L1 增量，需要人工确认是否成为本任务的上层约束。';
       }
-      return 'Acceptance 已完成，等待最终人工决策。';
+      if (stageKey === 'WaitForTechnicalDesignApproval') {
+        return 'TechnicalDesign 已产出 L2 设计，需要人工确认是否进入实现。';
+      }
+      return 'SessionHandoff 已完成，等待最终人工决策。';
     }
 
     function waitingHumanNextAction(stageKey) {
-      if (stageKey === 'WaitForCEOApproval') {
+      if (stageKey === 'WaitForProductDefinitionApproval' || stageKey === 'WaitForTechnicalDesignApproval') {
         return '由审批人决定 go / rework / no-go。';
       }
       return '由人工决定 go / no-go / rework。';
     }
 
     function missingRunReason(stageKey) {
-      if (stageKey === 'QA') {
-        return '当前阶段已经进入 QA，但还没有可跟踪的 QA run。';
+      if (stageKey === 'Verification') {
+        return '当前阶段已经进入 Verification，但还没有可跟踪的 Verification run。';
       }
       return `当前阶段已经进入 ${humanStageName(stageKey)}，但还没有可跟踪的 ${stageKey} run。`;
     }
@@ -800,7 +857,8 @@ BOARD_HTML = """<!doctype html>
     }
 
     function completedReasonFor(stageKey) {
-      if (stageKey === 'WaitForCEOApproval') return '人工审批已经放行，流程继续推进。';
+      if (stageKey === 'WaitForProductDefinitionApproval') return 'L1 人工审批已经放行，流程继续推进。';
+      if (stageKey === 'WaitForTechnicalDesignApproval') return '技术设计人工审批已经放行，流程继续推进。';
       if (stageKey === 'WaitForHumanDecision') return '最终人工决策已经完成。';
       return `${humanStageName(stageKey)} 已经完成并流转到后续节点。`;
     }
@@ -812,21 +870,33 @@ BOARD_HTML = """<!doctype html>
     }
 
     function isCompletedByArtifacts(session, stageKey) {
-      if (stageKey === 'Product') return Boolean(session.artifact_paths?.product);
-      if (stageKey === 'Dev') return Boolean(session.artifact_paths?.dev);
-      if (stageKey === 'QA') return Boolean(session.artifact_paths?.qa);
+      if (stageKey === 'Route') return Boolean(session.artifact_paths?.route);
+      if (stageKey === 'ProductDefinition') return Boolean(session.artifact_paths?.product_definition);
+      if (stageKey === 'ProjectRuntime') return Boolean(session.artifact_paths?.project_runtime);
+      if (stageKey === 'TechnicalDesign') return Boolean(session.artifact_paths?.technical_design);
+      if (stageKey === 'Implementation') return Boolean(session.artifact_paths?.implementation);
+      if (stageKey === 'Verification') return Boolean(session.artifact_paths?.verification);
+      if (stageKey === 'GovernanceReview') return Boolean(session.artifact_paths?.governance_review);
       if (stageKey === 'Acceptance') return Boolean(session.artifact_paths?.acceptance);
-      if (stageKey === 'WaitForCEOApproval') return workflowStageIndexFor(session) > 1;
+      if (stageKey === 'SessionHandoff') return Boolean(session.artifact_paths?.session_handoff);
+      if (stageKey === 'WaitForProductDefinitionApproval') return workflowStageIndexFor(session) > 2;
+      if (stageKey === 'WaitForTechnicalDesignApproval') return workflowStageIndexFor(session) > 5;
       if (stageKey === 'WaitForHumanDecision') return session.current_state === 'Done';
       return false;
     }
 
     function stageDeliverables(session, stageKey) {
-      if (stageKey === 'Product') return session.artifact_paths?.product ? 'PRD 已产出' : '尚无 PRD';
-      if (stageKey === 'Dev') return session.artifact_paths?.dev ? '实现说明已产出' : '尚无实现说明';
-      if (stageKey === 'QA') return session.artifact_paths?.qa ? 'QA 验证结果已产出' : '尚无 QA 验证结果';
+      if (stageKey === 'Route') return session.artifact_paths?.route ? 'Route Packet 已产出' : '尚无 Route Packet';
+      if (stageKey === 'ProductDefinition') return session.artifact_paths?.product_definition ? 'L1 增量已产出' : '尚无 L1 增量';
+      if (stageKey === 'ProjectRuntime') return session.artifact_paths?.project_runtime ? 'L3 落地增量已产出' : '尚无 L3 落地增量';
+      if (stageKey === 'TechnicalDesign') return session.artifact_paths?.technical_design ? '技术设计已产出' : '尚无技术设计';
+      if (stageKey === 'Implementation') return session.artifact_paths?.implementation ? '实现交付已产出' : '尚无实现交付';
+      if (stageKey === 'Verification') return session.artifact_paths?.verification ? '验证报告已产出' : '尚无验证报告';
+      if (stageKey === 'GovernanceReview') return session.artifact_paths?.governance_review ? '治理审查已产出' : '尚无治理审查';
       if (stageKey === 'Acceptance') return session.artifact_paths?.acceptance ? '验收建议已产出' : '尚无验收建议';
-      if (stageKey === 'WaitForCEOApproval') return '无需文件产物';
+      if (stageKey === 'SessionHandoff') return session.artifact_paths?.session_handoff ? 'Session Handoff 已产出' : '尚无 Session Handoff';
+      if (stageKey === 'WaitForProductDefinitionApproval') return '无需文件产物';
+      if (stageKey === 'WaitForTechnicalDesignApproval') return '无需文件产物';
       if (stageKey === 'WaitForHumanDecision') return '无需文件产物';
       if (stageKey === 'Done') return session.current_state === 'Done' ? '流程已结束' : '尚未结束';
       return '尚无';

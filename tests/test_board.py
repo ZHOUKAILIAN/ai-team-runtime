@@ -48,10 +48,10 @@ class BoardSnapshotTests(unittest.TestCase):
             session = store.create_session("build readonly board")
             store.create_stage_run(
                 session_id=session.session_id,
-                stage="Product",
-                contract_id="contract-product",
-                required_outputs=["product-requirements.md", "acceptance_plan.md"],
-                required_evidence=["explicit_acceptance_criteria", "explicit_acceptance_plan"],
+                stage="ProductDefinition",
+                contract_id="contract-product-definition",
+                required_outputs=["product-definition-delta.md"],
+                required_evidence=["l1_classification"],
                 worker="codex",
             )
             refresh_workspace_metadata(state_root=state_root, repo_root=repo_root)
@@ -62,11 +62,11 @@ class BoardSnapshotTests(unittest.TestCase):
             self.assertEqual(session_payload["active_run"]["state"], "RUNNING")
             self.assertEqual(
                 session_payload["active_run"]["required_outputs"],
-                ["product-requirements.md", "acceptance_plan.md"],
+                ["product-definition-delta.md"],
             )
             self.assertEqual(
                 session_payload["active_run"]["required_evidence"],
-                ["explicit_acceptance_criteria", "explicit_acceptance_plan"],
+                ["l1_classification"],
             )
 
     def test_board_snapshot_falls_back_for_legacy_workspace_without_metadata(self) -> None:

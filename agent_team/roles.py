@@ -5,8 +5,9 @@ from pathlib import Path
 from .models import RoleProfile
 from .packaged_assets import packaged_text
 from .project_structure import resolve_role_context_paths
+from .workflow import STAGES
 
-DEFAULT_ROLE_NAMES = ("Product", "Dev", "QA", "Acceptance")
+DEFAULT_ROLE_NAMES = STAGES
 
 
 def load_role_profiles(

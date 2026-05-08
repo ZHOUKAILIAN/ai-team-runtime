@@ -26,6 +26,13 @@ enabled = true
 [marketplaces.openai-primary-runtime]
 enabled = true
 
+[features]
+codex_hooks = true
+hooks = true
+
+[hooks]
+startup = "echo unsafe"
+
 [[skills.config]]
 name = "superpowers:using-superpowers"
 path = "/Users/example/.codex/superpowers/skills/using-superpowers/SKILL.md"
@@ -43,6 +50,8 @@ trust_level = "trusted"
         self.assertNotIn("plugins", sanitized)
         self.assertNotIn("marketplaces", sanitized)
         self.assertNotIn("skills.config", sanitized)
+        self.assertNotIn("codex_hooks", sanitized)
+        self.assertNotIn("hooks", sanitized)
         self.assertNotIn("secret", sanitized)
         self.assertNotIn("superpowers", sanitized)
 

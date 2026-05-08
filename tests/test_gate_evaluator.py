@@ -43,12 +43,12 @@ class GateEvaluatorTests(unittest.TestCase):
                 session_id=session.session_id,
                 stage="Acceptance",
                 status="completed",
-                artifact_name="acceptance_report.md",
+                artifact_name="acceptance-report.md",
                 artifact_content="# Acceptance\nLooks good.\n",
                 contract_id="contract-acceptance",
                 evidence=[
                     EvidenceItem(
-                        name="product_level_validation",
+                        name="product_and_governance_validation",
                         kind="artifact",
                         summary="Visual evidence reviewed.",
                     )
@@ -62,7 +62,7 @@ class GateEvaluatorTests(unittest.TestCase):
                 contract=contract,
                 result=result,
                 original_request_summary="Restore figma",
-                approved_prd_summary="Match frame",
+                approved_product_definition_summary="Match frame",
                 approved_acceptance_matrix=[],
             )
 
@@ -85,33 +85,33 @@ class GateEvaluatorTests(unittest.TestCase):
             registry = default_policy_registry()
             contract = registry.build_contract(
                 session_id=session.session_id,
-                stage="Dev",
-                contract_id="contract-dev",
+                stage="Implementation",
+                contract_id="contract-implementation",
                 input_artifacts={},
             )
             result = StageResultEnvelope(
                 session_id=session.session_id,
-                stage="Dev",
+                stage="Implementation",
                 status="completed",
                 artifact_name="implementation.md",
                 artifact_content="# Implementation\n",
-                contract_id="contract-dev",
+                contract_id="contract-implementation",
                 evidence=[],
             )
             judge = RecordingJudge("pass")
 
             evaluation = GateEvaluator(judge=judge).evaluate(
                 session=session,
-                policy=registry.get("Dev"),
+                policy=registry.get("Implementation"),
                 contract=contract,
                 result=result,
                 original_request_summary="Restore figma",
-                approved_prd_summary="Match frame",
+                approved_product_definition_summary="Match frame",
                 approved_acceptance_matrix=[],
             )
 
         self.assertEqual(evaluation.decision.outcome, "rework")
-        self.assertEqual(evaluation.decision.target_stage, "Dev")
+        self.assertEqual(evaluation.decision.target_stage, "Implementation")
         self.assertIn("self_code_review", evaluation.decision.missing_evidence)
         self.assertIn("self_verification", evaluation.decision.missing_evidence)
         self.assertEqual(judge.calls, [])
@@ -131,17 +131,17 @@ class GateEvaluatorTests(unittest.TestCase):
             registry = default_policy_registry()
             contract = registry.build_contract(
                 session_id=session.session_id,
-                stage="QA",
-                contract_id="contract-qa",
+                stage="Verification",
+                contract_id="contract-verification",
                 input_artifacts={},
             )
             result = StageResultEnvelope(
                 session_id=session.session_id,
-                stage="QA",
+                stage="Verification",
                 status="completed",
-                artifact_name="qa_report.md",
-                artifact_content="# QA\nNo obvious issue.\n",
-                contract_id="contract-qa",
+                artifact_name="verification-report.md",
+                artifact_content="# Verification\nNo obvious issue.\n",
+                contract_id="contract-verification",
                 evidence=[
                     EvidenceItem(
                         name="independent_verification",
@@ -153,18 +153,18 @@ class GateEvaluatorTests(unittest.TestCase):
                 ],
             )
 
-            evaluation = GateEvaluator(judge=RecordingJudge("rework", target_stage="Dev")).evaluate(
+            evaluation = GateEvaluator(judge=RecordingJudge("rework", target_stage="Implementation")).evaluate(
                 session=session,
-                policy=registry.get("QA"),
+                policy=registry.get("Verification"),
                 contract=contract,
                 result=result,
                 original_request_summary="Restore figma",
-                approved_prd_summary="Match frame",
+                approved_product_definition_summary="Match frame",
                 approved_acceptance_matrix=[],
             )
 
         self.assertEqual(evaluation.decision.outcome, "rework")
-        self.assertEqual(evaluation.decision.target_stage, "Dev")
+        self.assertEqual(evaluation.decision.target_stage, "Implementation")
         self.assertEqual(evaluation.decision.judge_verdict, "rework")
 
 

@@ -64,8 +64,6 @@ class JudgeStageResultCliTests(unittest.TestCase):
                     "执行这个需求：测试 dry-run verify",
                     "--executor",
                     "dry-run",
-                    "--max-stage-runs",
-                    "1",
                 ],
                 capture_output=True,
                 text=True,
@@ -95,7 +93,7 @@ class JudgeStageResultCliTests(unittest.TestCase):
             )
 
             self.assertEqual(result.returncode, 0)
-            self.assertIn("current_state: WaitForCEOApproval", result.stdout)
+            self.assertIn("current_state: WaitForProductDefinitionApproval", result.stdout)
             self.assertIn("next_action: record-human-decision", result.stdout)
 
     def test_verify_stage_result_with_noop_judge_advances_workflow(self) -> None:
@@ -116,8 +114,6 @@ class JudgeStageResultCliTests(unittest.TestCase):
                     "执行这个需求：测试带 judge 的验收流转",
                     "--executor",
                     "dry-run",
-                    "--max-stage-runs",
-                    "1",
                 ],
                 capture_output=True,
                 text=True,
@@ -126,7 +122,7 @@ class JudgeStageResultCliTests(unittest.TestCase):
             self.assertEqual(run_result.returncode, 0)
             session_id = run_result.stdout.splitlines()[0].split(": ", 1)[1]
 
-            # After run, session is at WaitForCEOApproval. Advance and run again.
+            # After run, session is at WaitForProductDefinitionApproval. Advance and run again.
             subprocess.run(
                 [
                     sys.executable,
@@ -147,7 +143,7 @@ class JudgeStageResultCliTests(unittest.TestCase):
                 check=True,
             )
 
-            # Run the next stage (Dev tech plan + Dev implementation)
+            # Run the next stages (ProjectRuntime + TechnicalDesign)
             result = subprocess.run(
                 [
                     sys.executable,
@@ -163,15 +159,13 @@ class JudgeStageResultCliTests(unittest.TestCase):
                     "--executor",
                     "dry-run",
                     "--auto",
-                    "--max-stage-runs",
-                    "3",
                 ],
                 capture_output=True,
                 text=True,
                 check=False,
             )
             self.assertEqual(result.returncode, 0)
-            self.assertIn("current_state: WaitForTechnicalPlanApproval", result.stdout)
+            self.assertIn("current_state: WaitForTechnicalDesignApproval", result.stdout)
 
     def test_verify_stage_result_requires_submitted_run(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
@@ -191,8 +185,6 @@ class JudgeStageResultCliTests(unittest.TestCase):
                     "执行这个需求：测试 verify 的状态校验",
                     "--executor",
                     "dry-run",
-                    "--max-stage-runs",
-                    "1",
                 ],
                 capture_output=True,
                 text=True,

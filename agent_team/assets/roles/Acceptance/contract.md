@@ -1,31 +1,24 @@
 ---
 name: acceptance
-description: 产品级验收，产出自 AI 建议，等人工 Go/No-Go。
+description: Produce final AI acceptance recommendation from product, verification, and governance evidence.
 ---
 
-# Acceptance 契约
+# Acceptance Contract
 
-## 输入
+## Inputs
 
-- `product-requirements.md`
-- `acceptance_plan.md`
+- All prior stage artifacts.
+- Verification and governance findings.
+- Acceptance contract derived from the original request, if present.
 
-## 输出
+## Output
 
-- `acceptance_report.md`
+- `acceptance-report.md`
 
-报告必须：验收输入、逐条对照判断、验收方案证据覆盖、产品级观察、剩余风险、建议（`recommended_go` | `recommended_no_go` | `blocked`）、给 CEO 的建议。
+The report must include recommendation, evidence summary, unmet criteria, residual risk, and whether a final human decision is ready.
 
-## 边界
+## Boundaries
 
-- 判断用户可见行为，不判断实现细节
-- 不重启外部工具、不修改环境（除非显式授权）
-- 缺凭证/环境/外部系统 → `blocked`
-- 只给 AI 建议，不做最终决策
-
-## 完成
-
-- `acceptance_report.md` 存在
-- 明确记录 `recommended_go` | `recommended_no_go` | `blocked`
-- 产品级观察对照 PRD 和验收方案
-- 返工 finding 含结构化发现和完成信号
+- Do not claim final human approval.
+- Do not skip SessionHandoff.
+- Do not ignore governance blockers.

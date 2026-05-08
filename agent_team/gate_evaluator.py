@@ -70,7 +70,7 @@ class GateEvaluator:
         contract: StageContract,
         result: StageResultEnvelope,
         original_request_summary: str,
-        approved_prd_summary: str,
+        approved_product_definition_summary: str,
         approved_acceptance_matrix: list[dict[str, object]],
     ) -> StageEvaluation:
         hard_gate_result, normalized = evaluate_candidate(
@@ -121,7 +121,7 @@ class GateEvaluator:
             result=normalized,
             hard_gate_result=hard_gate_result,
             original_request_summary=original_request_summary,
-            approved_prd_summary=approved_prd_summary,
+            approved_product_definition_summary=approved_product_definition_summary,
             approved_acceptance_matrix=approved_acceptance_matrix,
             previous_findings=list(hard_gate_result.findings),
         )

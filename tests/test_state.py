@@ -69,7 +69,7 @@ class StateTests(unittest.TestCase):
             self.assertEqual(summary.runtime_mode, "session_bootstrap")
             self.assertEqual(summary.current_state, "Intake")
             self.assertEqual(summary.current_stage, "Intake")
-            self.assertEqual(summary.prd_status, "pending")
+            self.assertEqual(summary.stage_statuses, {})
             self.assertEqual(summary.human_decision, "pending")
             self.assertIn("workflow_summary", summary.artifact_paths)
 
@@ -92,7 +92,7 @@ class StateTests(unittest.TestCase):
             store = StateStore(root)
             store.apply_learning(
                 Finding(
-                    source_stage="QA",
+                    source_stage="Verification",
                     target_stage="../../outside",
                     issue="malicious target",
                     lesson="ignore invalid targets",
@@ -128,8 +128,8 @@ class StateTests(unittest.TestCase):
             store = StateStore(root)
             store.apply_learning(
                 Finding(
-                    source_stage="Acceptance",
-                    target_stage="Dev",
+                    source_stage="SessionHandoff",
+                    target_stage="Implementation",
                     issue="Acceptance found a missing empty-state flow.",
                     severity="high",
                     lesson="Preserve product-visible empty states in regression coverage.",
@@ -138,11 +138,11 @@ class StateTests(unittest.TestCase):
                 )
             )
 
-            lessons = (root / "memory" / "Dev" / "lessons.md").read_text()
-            context_patch = (root / "memory" / "Dev" / "context_patch.md").read_text()
-            contract_patch = (root / "memory" / "Dev" / "contract_patch.md").read_text()
+            lessons = (root / "memory" / "Implementation" / "lessons.md").read_text()
+            context_patch = (root / "memory" / "Implementation" / "context_patch.md").read_text()
+            contract_patch = (root / "memory" / "Implementation" / "contract_patch.md").read_text()
 
-            self.assertIn("- source: Acceptance", lessons)
+            self.assertIn("- source: SessionHandoff", lessons)
             self.assertIn("- severity: high", lessons)
             self.assertIn("- issue: Acceptance found a missing empty-state flow.", lessons)
             self.assertIn("Constraint:", context_patch)
@@ -171,8 +171,8 @@ class StateTests(unittest.TestCase):
             round_one = store.record_stage(
                 session,
                 StageOutput(
-                    stage="QA",
-                    artifact_name="qa_report.md",
+                    stage="Verification",
+                    artifact_name="verification-report.md",
                     artifact_content="round one",
                     journal="journal one",
                 ),
@@ -181,8 +181,8 @@ class StateTests(unittest.TestCase):
             round_two = store.record_stage(
                 session,
                 StageOutput(
-                    stage="QA",
-                    artifact_name="qa_report.md",
+                    stage="Verification",
+                    artifact_name="verification-report.md",
                     artifact_content="round two",
                     journal="journal two",
                     supplemental_artifacts={"review_completion.json": '{"completed": true}'},
@@ -192,7 +192,7 @@ class StateTests(unittest.TestCase):
 
             self.assertIsNone(round_one.archive_path)
             self.assertIsNone(round_two.archive_path)
-            self.assertEqual((session.artifact_dir / "qa_report.md").read_text(), "round two")
+            self.assertEqual((session.artifact_dir / "verification-report.md").read_text(), "round two")
             self.assertEqual((session.artifact_dir / "review_completion.json").read_text(), '{"completed": true}')
             self.assertIn("review_completion.json", round_two.supplemental_artifact_paths)
             self.assertEqual(round_two.round_index, 2)
@@ -206,10 +206,10 @@ class StateTests(unittest.TestCase):
             state_root = Path(temp_dir)
             roles = load_role_profiles(repo_root=repo_root, state_root=state_root)
 
-            self.assertIn("Product", roles)
-            self.assertIn("Dev", roles)
+            self.assertIn("ProductDefinition", roles)
+            self.assertIn("Implementation", roles)
             self.assertNotIn("TechPlan", roles)
-            self.assertIn("Product Manager Onboarding Manual", roles["Product"].effective_context_text)
+            self.assertIn("ProductDefinition Stage Manual", roles["ProductDefinition"].effective_context_text)
 
     def test_load_role_profiles_uses_packaged_assets_when_repo_roles_are_missing(self) -> None:
         from agent_team.roles import load_role_profiles
@@ -223,17 +223,17 @@ class StateTests(unittest.TestCase):
 
             roles = load_role_profiles(repo_root=repo_root, state_root=state_root)
 
-            self.assertIn("Product", roles)
-            self.assertIn("QA", roles)
+            self.assertIn("ProductDefinition", roles)
+            self.assertIn("Verification", roles)
             self.assertNotIn("TechPlan", roles)
             self.assertNotIn("Ops", roles)
-            self.assertIn("Product Manager Onboarding Manual", roles["Product"].effective_context_text)
+            self.assertIn("ProductDefinition Stage Manual", roles["ProductDefinition"].effective_context_text)
 
-    def test_artifact_name_for_stage_keeps_ops_compatibility(self) -> None:
+    def test_artifact_name_for_stage_uses_five_layer_artifacts(self) -> None:
         from agent_team.state import artifact_name_for_stage
 
-        self.assertEqual(artifact_name_for_stage("Dev"), "implementation.md")
-        self.assertEqual(artifact_name_for_stage("Ops"), "release_notes.md")
+        self.assertEqual(artifact_name_for_stage("Implementation"), "implementation.md")
+        self.assertEqual(artifact_name_for_stage("Verification"), "verification-report.md")
 
     def test_stage_run_lifecycle_persists_active_candidate(self) -> None:
         from agent_team.models import StageResultEnvelope
@@ -245,10 +245,10 @@ class StateTests(unittest.TestCase):
 
             run = store.create_stage_run(
                 session_id=session.session_id,
-                stage="Product",
-                contract_id="contract-product",
-                required_outputs=["prd.md"],
-                required_evidence=["explicit_acceptance_criteria"],
+                stage="ProductDefinition",
+                contract_id="contract-product-definition",
+                required_outputs=["product-definition-delta.md"],
+                required_evidence=["l1_classification"],
                 worker="codex",
             )
 
@@ -258,16 +258,16 @@ class StateTests(unittest.TestCase):
 
             result = StageResultEnvelope(
                 session_id=session.session_id,
-                stage="Product",
+                stage="ProductDefinition",
                 status="completed",
-                artifact_name="prd.md",
-                artifact_content="# PRD\n\n## Acceptance Criteria\n- Works.\n",
-                contract_id="contract-product",
+                artifact_name="product-definition-delta.md",
+                artifact_content="# Product Definition Delta\n\n## L1 Impact\n- Works.\n",
+                contract_id="contract-product-definition",
                 evidence=[
                     {
-                        "name": "explicit_acceptance_criteria",
+                        "name": "l1_classification",
                         "kind": "report",
-                        "summary": "PRD includes explicit acceptance criteria.",
+                        "summary": "Layer 1 impact is classified.",
                     }
                 ],
             )
@@ -275,7 +275,7 @@ class StateTests(unittest.TestCase):
 
             self.assertEqual(submitted.state, "SUBMITTED")
             self.assertTrue(Path(submitted.candidate_bundle_path).exists())
-            self.assertEqual(store.active_stage_run(session.session_id, stage="Product").state, "SUBMITTED")
+            self.assertEqual(store.active_stage_run(session.session_id, stage="ProductDefinition").state, "SUBMITTED")
 
     def test_submit_stage_run_result_uses_result_session_when_run_ids_repeat(self) -> None:
         from agent_team.models import StageResultEnvelope
@@ -287,17 +287,17 @@ class StateTests(unittest.TestCase):
             second_session = store.create_session("second workflow")
             first_run = store.create_stage_run(
                 session_id=first_session.session_id,
-                stage="Product",
+                stage="ProductDefinition",
                 contract_id="first-contract",
-                required_outputs=["prd.md"],
-                required_evidence=["explicit_acceptance_criteria"],
+                required_outputs=["product-definition-delta.md"],
+                required_evidence=["l1_classification"],
             )
             second_run = store.create_stage_run(
                 session_id=second_session.session_id,
-                stage="Product",
+                stage="ProductDefinition",
                 contract_id="second-contract",
-                required_outputs=["prd.md"],
-                required_evidence=["explicit_acceptance_criteria"],
+                required_outputs=["product-definition-delta.md"],
+                required_evidence=["l1_classification"],
             )
 
             self.assertEqual(first_run.run_id, second_run.run_id)
@@ -305,24 +305,24 @@ class StateTests(unittest.TestCase):
                 second_run.run_id,
                 StageResultEnvelope(
                     session_id=second_session.session_id,
-                    stage="Product",
+                    stage="ProductDefinition",
                     status="completed",
-                    artifact_name="prd.md",
-                    artifact_content="# PRD\n\n## Acceptance Criteria\n- Works.\n",
+                    artifact_name="product-definition-delta.md",
+                    artifact_content="# Product Definition Delta\n\n## L1 Impact\n- Works.\n",
                     contract_id="second-contract",
                     evidence=[
                         {
-                            "name": "explicit_acceptance_criteria",
+                            "name": "l1_classification",
                             "kind": "report",
-                            "summary": "PRD includes explicit acceptance criteria.",
+                            "summary": "Layer 1 impact is classified.",
                         }
                     ],
                 ),
             )
 
             self.assertEqual(submitted.session_id, second_session.session_id)
-            self.assertEqual(store.active_stage_run(first_session.session_id, stage="Product").state, "RUNNING")
-            self.assertEqual(store.active_stage_run(second_session.session_id, stage="Product").state, "SUBMITTED")
+            self.assertEqual(store.active_stage_run(first_session.session_id, stage="ProductDefinition").state, "RUNNING")
+            self.assertEqual(store.active_stage_run(second_session.session_id, stage="ProductDefinition").state, "SUBMITTED")
 
     def test_create_stage_run_rejects_existing_active_run(self) -> None:
         from agent_team.state import StageRunStateError, StateStore
@@ -332,19 +332,19 @@ class StateTests(unittest.TestCase):
             session = store.create_session("build an enforced workflow")
             store.create_stage_run(
                 session_id=session.session_id,
-                stage="Product",
-                contract_id="contract-product",
-                required_outputs=["prd.md"],
-                required_evidence=["explicit_acceptance_criteria"],
+                stage="ProductDefinition",
+                contract_id="contract-product-definition",
+                required_outputs=["product-definition-delta.md"],
+                required_evidence=["l1_classification"],
             )
 
             with self.assertRaises(StageRunStateError):
                 store.create_stage_run(
                     session_id=session.session_id,
-                    stage="Product",
-                    contract_id="contract-product",
-                    required_outputs=["prd.md"],
-                    required_evidence=["explicit_acceptance_criteria"],
+                    stage="ProductDefinition",
+                    contract_id="contract-product-definition",
+                    required_outputs=["product-definition-delta.md"],
+                    required_evidence=["l1_classification"],
                 )
 
     def test_load_workflow_summary_falls_back_to_artifact_dir(self) -> None:

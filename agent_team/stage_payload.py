@@ -26,8 +26,6 @@ ALLOWED_STAGE_PAYLOAD_FIELDS = frozenset(
         "suggested_next_owner",
         "summary",
         "acceptance_status",
-        "acceptance_plan_content",
-        "technical_plan_content",
         "blocked_reason",
     }
 )
@@ -55,14 +53,6 @@ def envelope_from_stage_payload(
             + ", ".join(unexpected)
         )
 
-    supplemental_artifacts: dict[str, str] = {}
-    acceptance_plan_content = str(payload.get("acceptance_plan_content", "") or "")
-    if stage == "Product" and acceptance_plan_content.strip():
-        supplemental_artifacts["acceptance_plan.md"] = acceptance_plan_content
-    technical_plan_content = str(payload.get("technical_plan_content", "") or "")
-    if stage == "Dev" and technical_plan_content.strip():
-        supplemental_artifacts["technical_plan.md"] = technical_plan_content
-
     envelope_payload = {
         "session_id": session_id,
         "stage": stage,
@@ -77,7 +67,7 @@ def envelope_from_stage_payload(
         "summary": payload.get("summary", ""),
         "acceptance_status": payload.get("acceptance_status", ""),
         "blocked_reason": payload.get("blocked_reason", ""),
-        "supplemental_artifacts": supplemental_artifacts,
+        "supplemental_artifacts": {},
     }
     return StageResultEnvelope.from_dict(envelope_payload)
 
@@ -85,6 +75,6 @@ def envelope_from_stage_payload(
 def default_stage_payload_status(stage: str, payload: dict[str, Any]) -> str:
     if payload.get("blocked_reason"):
         return "blocked"
-    if stage == "QA" and payload.get("findings"):
+    if stage == "Verification" and payload.get("findings"):
         return "failed"
     return "completed"
