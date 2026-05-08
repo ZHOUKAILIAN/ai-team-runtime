@@ -4,33 +4,48 @@ from pathlib import Path
 from typing import Mapping
 
 
-PRODUCT_ARTIFACT_KEYS = frozenset(
-    {
-        "product",
-        "product_requirements",
-        "product-requirements",
-        "product-requirements.md",
-        "prd",
-    }
-)
-ACCEPTANCE_PLAN_ARTIFACT_KEYS = frozenset({"acceptance_plan", "acceptance_plan.md"})
-TECHNICAL_PLAN_ARTIFACT_KEYS = frozenset({"technical_plan", "techplan", "technical_plan.md"})
-DEV_ARTIFACT_KEYS = frozenset({"dev", "implementation", "implementation.md"})
 STAGE_DOCUMENT_ARTIFACT_KEYS = {
-    "Product": PRODUCT_ARTIFACT_KEYS | ACCEPTANCE_PLAN_ARTIFACT_KEYS,
-    "Dev": (
-        PRODUCT_ARTIFACT_KEYS
-        | ACCEPTANCE_PLAN_ARTIFACT_KEYS
-        | TECHNICAL_PLAN_ARTIFACT_KEYS
-        | DEV_ARTIFACT_KEYS
+    "Route": frozenset(),
+    "ProductDefinition": frozenset({"route", "route-packet", "route-packet.json"}),
+    "ProjectRuntime": frozenset({"route", "product_definition"}),
+    "TechnicalDesign": frozenset({"route", "product_definition", "project_runtime"}),
+    "Implementation": frozenset({"route", "product_definition", "project_runtime", "technical_design"}),
+    "Verification": frozenset(
+        {"route", "product_definition", "project_runtime", "technical_design", "implementation"}
     ),
-    "QA": (
-        PRODUCT_ARTIFACT_KEYS
-        | ACCEPTANCE_PLAN_ARTIFACT_KEYS
-        | TECHNICAL_PLAN_ARTIFACT_KEYS
-        | DEV_ARTIFACT_KEYS
+    "GovernanceReview": frozenset(
+        {
+            "route",
+            "product_definition",
+            "project_runtime",
+            "technical_design",
+            "implementation",
+            "verification",
+        }
     ),
-    "Acceptance": PRODUCT_ARTIFACT_KEYS | ACCEPTANCE_PLAN_ARTIFACT_KEYS,
+    "Acceptance": frozenset(
+        {
+            "route",
+            "product_definition",
+            "project_runtime",
+            "technical_design",
+            "implementation",
+            "verification",
+            "governance_review",
+        }
+    ),
+    "SessionHandoff": frozenset(
+        {
+            "route",
+            "product_definition",
+            "project_runtime",
+            "technical_design",
+            "implementation",
+            "verification",
+            "governance_review",
+            "acceptance",
+        }
+    ),
 }
 
 
@@ -58,8 +73,8 @@ def stage_context_artifact_paths(
     }
 
 
-def stage_allows_technical_plan_context(stage: str) -> bool:
-    return stage in {"Dev", "QA"}
+def stage_allows_technical_design_context(stage: str) -> bool:
+    return stage in {"Implementation", "Verification", "GovernanceReview", "Acceptance", "SessionHandoff"}
 
 
 def _filter_existing_artifact_paths(

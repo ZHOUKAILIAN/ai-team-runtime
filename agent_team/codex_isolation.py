@@ -37,6 +37,8 @@ def sanitize_codex_config(text: str) -> str:
     skip_section = False
     for line in text.splitlines():
         stripped = line.strip()
+        if _is_filtered_key(stripped):
+            continue
         if _starts_filtered_section(stripped):
             skip_section = True
             continue
@@ -55,8 +57,18 @@ def _starts_filtered_section(stripped_line: str) -> bool:
         or stripped_line == "[plugins]"
         or stripped_line.startswith("[marketplaces.")
         or stripped_line == "[marketplaces]"
+        or stripped_line.startswith("[hooks.")
+        or stripped_line == "[hooks]"
+        or stripped_line == "[[hooks]]"
+        or stripped_line.startswith("[codex_hooks.")
+        or stripped_line == "[codex_hooks]"
+        or stripped_line == "[[codex_hooks]]"
         or stripped_line == "[[skills.config]]"
     )
+
+
+def _is_filtered_key(stripped_line: str) -> bool:
+    return stripped_line.startswith("codex_hooks") or stripped_line.startswith("hooks")
 
 
 def _copy_file_if_exists(source: Path, destination: Path) -> None:

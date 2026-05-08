@@ -11,7 +11,7 @@ class DocsTests(unittest.TestCase):
         self.assertIn("CLI-first", readme)
         self.assertIn("orchestration runtime", readme)
         self.assertIn("可自我进化", readme)
-        self.assertIn("Product / Dev / QA / Acceptance", readme)
+        self.assertIn("五层九阶段流程", readme)
         self.assertNotIn("Ops", readme)
 
     def test_readme_documents_agent_team_cli_usage(self) -> None:
@@ -26,7 +26,7 @@ class DocsTests(unittest.TestCase):
         self.assertIn("--executor dry-run", readme)
         self.assertNotIn("--executor deterministic", readme)
         self.assertIn("agent-team skill list", readme)
-        self.assertIn("agent-team skill default Dev plan", readme)
+        self.assertIn("agent-team skill default Implementation plan", readme)
         self.assertIn("agent-team record-human-decision", readme)
         self.assertIn("agent-team verify-stage-result", readme)
         self.assertNotIn("install-codex-skill", readme)
@@ -50,10 +50,10 @@ class DocsTests(unittest.TestCase):
         readme = (repo_root / "README.md").read_text()
 
         self.assertIn(
-            "Product -> PRD/acceptance approval -> Dev technical plan -> technical plan approval -> Dev implementation <-> QA -> Acceptance -> human Go/No-Go",
+            "Route -> ProductDefinition approval -> ProjectRuntime -> TechnicalDesign approval -> Implementation -> Verification -> GovernanceReview -> Acceptance -> SessionHandoff -> human Go/No-Go",
             readme,
         )
-        self.assertIn("QA", readme)
+        self.assertIn("Verification", readme)
         self.assertIn("Acceptance", readme)
         self.assertIn("human Go/No-Go", readme)
         self.assertNotIn("Ops", readme)

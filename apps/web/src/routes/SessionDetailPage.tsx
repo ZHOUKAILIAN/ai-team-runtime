@@ -12,7 +12,22 @@ type Props = {
   onBack: () => void;
 };
 
-const flow = ["Intake", "Product", "Dev", "QA", "Acceptance", "WaitForHumanDecision", "Done"];
+const flow = [
+  "Intake",
+  "Route",
+  "ProductDefinition",
+  "WaitForProductDefinitionApproval",
+  "ProjectRuntime",
+  "TechnicalDesign",
+  "WaitForTechnicalDesignApproval",
+  "Implementation",
+  "Verification",
+  "GovernanceReview",
+  "Acceptance",
+  "SessionHandoff",
+  "WaitForHumanDecision",
+  "Done"
+];
 
 export function SessionDetailPage({ snapshot, projectId, sessionId, language, onBack }: Props) {
   const t = messages[language];
@@ -131,8 +146,5 @@ function currentFlowIndex(currentState: string, currentStage: string) {
   if (exactIndex >= 0) return exactIndex;
   const stageIndex = flow.indexOf(currentStage);
   if (stageIndex >= 0) return stageIndex;
-  if (currentState === "ProductDraft" || currentState === "WaitForCEOApproval") return flow.indexOf("Product");
-  if (currentState === "Implementation" || currentState === "CodeReview") return flow.indexOf("Dev");
-  if (currentState === "QualityReview") return flow.indexOf("QA");
   return 0;
 }

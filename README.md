@@ -1,195 +1,177 @@
 # Agent Team CLI Runtime
 
-`Agent Team` 是一个通过 CLI 暴露、对 AI 友好的工程化团队编排运行时。
+`Agent Team` 是一个 CLI-first 的 AI team orchestration runtime。它的目标不是提供一组 prompt，而是用状态机、stage contract、证据 gate 和可回放运行态，把 AI 团队工作约束成可审计、可恢复、可自我进化的工程流程。
 
-它的目标不是做一组 prompt，也不是做一个只会演示流程的 skill 样例，而是做一个可以持续演进的 runtime：
+## 定位
 
-- 对外是一个 CLI 产品
-- 对内是一套可扩展的 orchestration framework
-- 默认内置 Product / Dev / QA / Acceptance 团队；Dev 先产出技术方案，经确认后再实现
-- 能把反馈、返工、证据和人工决策沉淀为可复用的运行时资产
+- 对外是 `agent-team` CLI 产品。
+- 对内是可扩展的 orchestration runtime。
+- 默认运行五层九阶段流程，而不是旧的 Product / Dev / QA 三角色串联。
+- 反馈、返工、证据、人工决策和本地接力都会沉淀成运行时资产。
 
-## 项目定位
+## 五层阶段
 
-这个项目要解决的问题是：
-
-- 让 AI 团队以工程化方式运行，而不是只靠对话里的约定运行
-- 让产品、研发、测试、验收有明确边界，而不是在一个 agent 里混成一团
-- 让流程推进、返工、等待人工审批、证据要求都由 runtime 控制
-- 让团队行为可以被记录、被学习、被扩展、被替换
-
-一句话定义：
-
-`Agent Team` 是一个 CLI-first 的 AI team orchestration runtime。
-
-## 核心目标
-
-- 通过 `agent-team` CLI 驱动整套流程
-- 内置一个可自我进化的产品-研发-测试-验收团队
-- 用状态机和 artifact contract 约束流程
-- 支持可扩展的角色、阶段、规则和学习回流
-- 让 skill 从“流程控制器”降级为“入口与 prompt 素材”
-
-## 当前团队模型
-
-当前默认团队是：
-
-- `Product`
-- `Dev`
-- `QA`
-- `Acceptance`
-
-当前权威流程链路是：
-
-`Product -> PRD/acceptance approval -> Dev technical plan -> technical plan approval -> Dev implementation <-> QA -> Acceptance -> human Go/No-Go`
-
-这意味着：
-
-- Product 负责产出 PRD 和独立的验收方案
-- Dev 先负责产出独立技术方案和验证策略，经人确认后再负责实现、代码自 review 和自验证
-- QA 必须独立验证，不能被 Dev 自测替代
-- Acceptance 负责产品级验收建议
-- 最终 human Go/No-Go 必须由人来决定
-
-## 框架结构
-
-从框架角度看，当前仓库由四层构成：
-
-### 1. CLI Runtime
-
-CLI 是用户和上层 AI 的统一入口。
-
-当前主入口是：
-
-```bash
-agent-team
-```
-
-已经落地的主要命令：
-
-- `agent-team init`
-- `agent-team run`
-- `agent-team status [--verbose|--json]`
-- `agent-team panel [--json]`
-- `agent-team verify-stage-result [--dry-run]`
-- `agent-team record-human-decision`
-- `agent-team record-feedback`
-- `agent-team review`
-- `agent-team skill list|show|preferences|default`
-
-### 2. Session Runtime
-
-运行时负责：
-
-- 创建 session
-- 持久化 session 状态，机器状态源是 `_runtime/sessions/<session-id>/workflow_summary.json`
-- 维护当前阶段和当前状态
-- 保存 artifact、journal、findings、feedback
-- 记录人工决策
-- 回写学习内容
-
-### 3. Team Contract Layer
-
-这一层定义：
-
-- 每个阶段的目标
-- 必需产物
-- 禁止动作
-- 证据要求
-- 当前输入资产
-
-worker 看到的是 stage contract，不是自由发挥的任务描述。
-
-### 4. Role Asset Layer
-
-角色目录和内置角色资产仍然保留，但它们只是 context / contract 素材，不再作为 workflow 控制器：
-
-- `Product/`
-- `Dev/`
-- `QA/`
-- `Acceptance/`
-- `agent_team/assets/roles/`
-- `agent_team/assets/skills/`
-
-## 当前已实现的运行时能力
-
-当前分支已经落地的能力包括：
-
-- 仓库内 `.agent-team/` 单目录状态
-- 显式 stage machine
-- stage contract 生成
-- stage-run acquire / submit / verify 强制流转
-- runtime driver 逐阶段执行 `contract -> context -> acquire -> execute -> submit -> verify -> advance`，并把运行步骤、gate 和产物索引合并写入 `<role>-stage-result.json`
-- 模型或命令执行器只返回 stage payload；`session_id`、`stage`、`contract_id`、`artifact_name` 等流程字段由 runtime 注入
-- stage-result candidate bundle 提交
-- wait state 下的人工决策
-- feedback 到三层 memory 的学习回流：`raw/` 原始记录、`extracted/` 可执行规则、`graph/` 关联边
-- role memory 先用 CLI 关键词检索，再把命中的 raw/extracted/graph 片段压进 stage contract；隐含关系才需要后续 AI/图分析
-- 事件流驱动的 panel snapshot
-- 本地只读 Web panel
-- 可安装的 `agent-team` CLI
-
-当前默认状态目录：
+权威流程链路：
 
 ```text
-<repo-root>/.agent-team/
+Route -> ProductDefinition approval -> ProjectRuntime -> TechnicalDesign approval -> Implementation -> Verification -> GovernanceReview -> Acceptance -> SessionHandoff -> human Go/No-Go
 ```
 
-人类可读 session 产物集中在：
+阶段对应关系：
+
+- `Route`: 需求路由，识别 L1/L2/L3/L4/L5 影响、红线和所需阶段。
+- `ProductDefinition`: L1 产品定义 delta，只处理稳定产品语义、核心对象、运行模型和长期边界。
+- `ProjectRuntime`: L3 项目落地 delta，记录本项目入口、目录、运行、打包和默认承载方式。
+- `TechnicalDesign`: L2 技术设计，基于 L1/L3 和当前实现现实制定实现方案。
+- `Implementation`: L2 实现现实，修改代码、测试、运行脚本并记录自检证据。
+- `Verification`: 独立验证实现结果，不能被 Implementation 自测替代。
+- `GovernanceReview`: L4 仓库治理审查，检查五层边界、证据、回写和 public/private 风险。
+- `Acceptance`: AI 最终验收建议，不代替人的最终决策。
+- `SessionHandoff`: L5 本地开发控制层，保留接力、未决项和本地现场。
+
+下层依赖上层：低层只能报告 drift 或 delta，不能反向改写上层正式依据。
+
+## CLI
+
+主要命令：
+
+```bash
+agent-team init
+agent-team run --message "<你的需求>"
+agent-team status --session-id <session_id> [--verbose|--json]
+agent-team panel --session-id <session_id> [--json]
+agent-team verify-stage-result --session-id <session_id> [--dry-run]
+agent-team record-human-decision --session-id <session_id> --decision go
+agent-team record-feedback --session-id <session_id> --source-stage Verification --target-stage Implementation --issue "<issue>" --apply-rework
+agent-team skill list|show|preferences|default
+```
+
+初始化项目：
+
+```bash
+cd /path/to/your/project
+agent-team init
+```
+
+`init` 会创建 `agent-team/project/five-layer/` 并准备五层分类 prompt。交互终端默认会尝试调用 `codex exec`，使用 GitHub skill source：
+
+```text
+https://github.com/ZHOUKAILIAN/skills/tree/feature/five-layer-classifier-skill/five-layer-classifier
+```
+
+非交互式脚本默认跳过实际 Codex 执行，只写入：
+
+```text
+agent-team/project/five-layer/classification.md
+agent-team/project/five-layer/classification-run.json
+agent-team/project/five-layer/classification-prompt.md
+```
+
+强制运行或跳过：
+
+```bash
+agent-team init --five-layer-classification run
+agent-team init --five-layer-classification skip
+```
+
+## 运行
+
+真实执行默认使用 `codex-exec`：
+
+```bash
+agent-team run --message "写个js文件，并打印agent-team-runtime"
+```
+
+离线验证 workflow 文件和 gate：
+
+```bash
+agent-team run --message "写个js文件，并打印agent-team-runtime" --executor dry-run
+```
+
+`--auto` 只自动推进非人工 gate。`ProductDefinition`、`TechnicalDesign` 和最终 `SessionHandoff` 仍然需要人工决策：
+
+```bash
+agent-team run --session-id <session_id> --executor dry-run --auto
+agent-team record-human-decision --session-id <session_id> --decision go
+```
+
+## 产物
+
+人类可读 session 产物位于：
 
 ```text
 <repo-root>/.agent-team/<session_id>/
 ```
 
-机器运行态文件集中在：
+典型产物：
+
+```text
+route-packet.json
+product-definition-delta.md
+project-landing-delta.md
+technical-design.md
+implementation.md
+verification-report.md
+governance-review.md
+acceptance-report.md
+session-handoff.md
+```
+
+机器运行态位于：
 
 ```text
 <repo-root>/.agent-team/_runtime/sessions/<session_id>/
 ```
 
-长期学习内容放在 `<repo-root>/.agent-team/memory/`。每个角色下保留 memory overlay，以及三层结构：
+每个 stage-run 记录不可跳过链路：
 
 ```text
-<repo-root>/.agent-team/memory/<Role>/raw/findings.jsonl
-<repo-root>/.agent-team/memory/<Role>/extracted/{lessons,context_patch,contract_patch}.md
-<repo-root>/.agent-team/memory/<Role>/graph/relations.jsonl
+contract_built -> execution_context_built -> stage_run_acquired -> executor_started -> executor_completed -> result_submitted -> gate_evaluated -> state_advanced
 ```
 
-runtime 不再默认拆出 repo 外的 `workspaces/`、`artifacts/`、`sessions/` 多层目录。
+stage 调试文件形如：
 
-## 当前边界
+```text
+_runtime/sessions/<session-id>/roles/<role>/attempt-001/stage-results/<role>-stage-result.json
+_runtime/sessions/<session-id>/roles/<role>/attempt-001/execution-contexts/<role>-input-context.json
+_runtime/sessions/<session-id>/roles/<role>/attempt-001/command-outputs/<role>-command-stdout.txt
+```
 
-当前这套 runtime 已经能用 `run` 自动驱动 Product/Dev 技术方案/Dev 实现/QA/Acceptance，并在 PRD、技术方案和最终验收三个人工 gate 处停住。仍在演进的部分主要包括：
+## Skill defaults and runtime workflow
 
-- 原生 Codex 插件体验
-- 更完整的扩展注册机制
-- 可视化审批和 timeline
+`.agent-team/skill-preferences.yaml` 保存每个阶段的默认 skill、上次选择和使用频率。
 
-所以当前最准确的理解是：
+```bash
+agent-team skill list
+agent-team skill show security-audit
+agent-team skill preferences
+agent-team skill default Implementation plan
+agent-team skill default Verification security-audit
+agent-team skill default Acceptance e2e-coverage-guard
+```
 
-它已经用 runtime 强制“控流程”和“跑流程”；PRD 审批、技术方案审批与最终 Go/No-Go 仍由人卡控，`--auto` 只自动通过 Dev 实现和 QA。
+单次覆盖：
 
-## 安装与使用
+```bash
+agent-team run --message "<你的需求>" --with-skills Implementation:plan --skip-skills Verification:security-audit
+agent-team run --message "<你的需求>" --skills-empty
+```
 
-推荐通过 GitHub Releases 安装正式版本。beta 版本会以 GitHub pre-release 发布，不会覆盖 latest。
+每次注入的 skill 会记录在 stage result 的 `steps[].details.skill_injection` 中，包含 skill 名称、source type、source ref、scope、delivery、installed path，以及是否进入 prompt。
 
-安装前提：
+## 安装
+
+前提：
 
 - Python 3.13+
 - `curl`
 - `shasum` 或 `sha256sum`
-- 能访问 GitHub Releases 和 PyPI；安装脚本会下载 release wheel，并让 `pip` 安装运行时依赖。
+- 能访问 GitHub Releases 和 PyPI
 
 安装最新版本：
 
 ```bash
 curl -fsSL https://github.com/ZHOUKAILIAN/agent-team-runtime/releases/latest/download/install.sh | sh
-```
-
-安装当前 beta 版本：
-
-```bash
-curl -fsSL https://github.com/ZHOUKAILIAN/agent-team-runtime/releases/download/v0.2.0b6/install.sh | sh
 ```
 
 安装固定版本：
@@ -198,209 +180,27 @@ curl -fsSL https://github.com/ZHOUKAILIAN/agent-team-runtime/releases/download/v
 curl -fsSL https://github.com/ZHOUKAILIAN/agent-team-runtime/releases/download/v0.1.0/install.sh | sh
 ```
 
-安装完成后，稳定命令入口是：
-
-```bash
-~/.local/bin/agent-team
-```
-
-当前版本发布资产包括 `wheel`、源码包、`install.sh`、`SHA256SUMS` 和版本级 `CHANGELOG.md`。
-
-如果你是在仓库里做开发，再使用本地 editable 安装：
+开发安装：
 
 ```bash
 pip install -e .
 ```
-
-### 在自己的项目里试一次
-
-安装完成后，先确保 `agent-team` 在 PATH 里：
-
-```bash
-export PATH="$HOME/.local/bin:$PATH"
-agent-team --help
-```
-
-进入一个真实项目仓库后初始化运行时目录和项目文档结构：
-
-```bash
-cd /path/to/your/project
-agent-team init
-```
-
-如果本机已经安装并登录 Codex CLI，可以用默认 `codex-exec` 真实跑一条需求：
-
-```bash
-agent-team run --message "写个js文件，并打印agent-team-runtime" --auto
-```
-
-如果只想先验证安装和 workflow 文件生成，不调用 Codex：
-
-```bash
-agent-team run --message "写个js文件，并打印agent-team-runtime" --executor dry-run --auto
-```
-
-### Skill defaults and runtime workflow
-
-```bash
-agent-team skill list
-agent-team skill show security-audit
-agent-team skill preferences
-agent-team skill default Dev plan
-agent-team skill default QA security-audit
-agent-team skill default Acceptance e2e-coverage-guard
-```
-
-`.agent-team/skill-preferences.yaml` stores the per-stage default skills, the last used selection, and frequency counters. `agent-team run` reads that file automatically, so after you configure a stage once, later runs reuse the same skills without re-prompting.
-Each recorded skill also keeps its source reference: local skills use an absolute filesystem path, and remote skills can store a URL so the same skill can be injected into another session later.
-
-One-off overrides still work on `run`:
-
-```bash
-agent-team run --message "<你的需求>" --with-skills Dev:plan --skip-skills QA:security-audit
-agent-team run --message "<你的需求>" --skills-empty
-```
-
-Each stage execution records the actual injected skill list in `_runtime/sessions/<session-id>/roles/<role>/attempt-001/stage-results/<role>-stage-result.json`, under `steps[].details.skill_injection`. The trace includes skill name, source type, source ref, scope, delivery, installed path, and whether the skill was included in the prompt.
-
-Stage outputs keep two surfaces:
-
-- Latest human-facing artifacts stay at the session root, for example `product-requirements.md`, `acceptance_plan.md`, `technical_plan.md`, `implementation.md`, `qa_report.md`, and `acceptance_report.md`.
-- Agent replay/debug files stay under `_runtime/sessions/<session-id>/roles/<role>/attempt-001/`, grouped by before/after/command:
-  - `execution-contexts/<role>-input-context.json`
-  - `execution-contexts/<role>-task-contract.json`
-  - `execution-contexts/<role>-output-schema.json`
-  - `execution-contexts/<role>-agent-prompt-bundle.md` only when `--trace-prompts` is enabled
-  - `stage-results/<role>-stage-result.json`
-  - `stage-results/<role>-output-<artifact-name>.md`
-  - `command-outputs/<role>-command-stdout.txt`
-  - `command-outputs/<role>-command-stderr.txt`
-  - `supplemental-artifacts/<name>`
-
-启动一个 session：
-
-```bash
-agent-team run --message "<你的需求>"
-```
-
-默认 executor 是 `codex-exec`，runtime 会逐阶段调用 `codex exec`，并在每个阶段之后提交和验证 `StageResultEnvelope`。每个 stage-run 会生成 `<role>-stage-result.json`，记录不可跳过的 `contract_built`、`execution_context_built`、`stage_run_acquired`、`executor_started`、`executor_completed`、`result_submitted`、`gate_evaluated`、`state_advanced` 链路。Product 完成后默认停在 `WaitForCEOApproval`；确认 PRD 和验收方案后会由 Dev 先生成 `technical_plan.md` 并停在 `WaitForTechnicalPlanApproval`。如果你想在技术方案确认后自动通过 Dev 实现和 QA，可以加：
-
-```bash
-agent-team run --message "<你的需求>" --auto
-```
-
-测试或离线演示可以用 `dry-run` executor：
-
-```bash
-agent-team run --message "<你的需求>" --executor dry-run
-```
-
-继续一个已经通过 PRD 审批的 session：
-
-```bash
-agent-team run --session-id <session_id> --auto
-```
-
-查看用户友好的状态摘要：
-
-```bash
-agent-team status --session-id <session_id>
-```
-
-查看详细状态（含下一步动作、contract 信息、stage run 状态）：
-
-```bash
-agent-team status --session-id <session_id> --verbose
-```
-
-输出机器可读 JSON：
-
-```bash
-agent-team status --session-id <session_id> --json
-```
-
-打开本地只读 panel：
-
-```bash
-agent-team panel --session-id <session_id> --port 8765
-```
-
-输出 panel JSON 快照（不启动 server）：
-
-```bash
-agent-team panel --session-id <session_id> --json
-```
-
-验证候选结果并决定是否推进 workflow：
-
-```bash
-agent-team verify-stage-result --session-id <session_id>
-```
-
-只读验证（不推进 workflow 状态）：
-
-```bash
-agent-team verify-stage-result --session-id <session_id> --dry-run
-```
-
-候选 bundle 里的 `evidence` 必须是结构化对象，runtime 会按 contract 的 `evidence_specs` 校验证据名称、类型和必填字段。
-
-记录人工决策：
-
-```bash
-agent-team record-human-decision --session-id <session_id> --decision go
-```
-
-把人工反馈同时作为 rework 决策回流到目标阶段：
-
-```bash
-agent-team record-feedback --session-id <session_id> --source-stage Acceptance --target-stage Dev --issue "<issue>" --apply-rework
-```
-
-在 `Codex App` 里运行时，推荐把这套系统理解成：
-
-- `agent-team` 负责控流程、发 contract、认领 run、收 candidate bundle、做 gate 验证、记状态
-- `agent-team panel` 把当前 action、阻塞原因、证据缺口和最近 timeline 可视化出来
-- Codex 负责按当前 stage contract 执行真实工作并提交结果
-- 当前能稳定支持“最小 harness 循环”，还不是一条命令全自动跑完所有角色
-
-## 仓库结构
-
-核心目录：
-
-- `agent_team/`
-  - 当前 runtime 核心实现
-- `Product/`, `Dev/`, `QA/`, `Acceptance/`
-  - 角色资产
-- `scripts/`
-  - 项目级 helper
-- `docs/workflow-specs/`
-  - 运行时设计、流程和使用文档
-- `tests/`
-  - 运行时、文档和打包测试
-
-内部 Python 包名和模块入口均为 `agent_team`，对外 CLI 入口为 `agent-team`。
 
 ## 核心文档
 
 - [运行时设计](docs/workflow-specs/2026-04-11-agent-team-cli-runtime-design.md)
 - [当前流程说明](docs/workflow-specs/2026-04-11-agent-team-cli-runtime-flow.md)
 - [CLI 使用说明](docs/workflow-specs/2026-04-11-agent-team-cli-runtime-usage.md)
-- [变更记录](CHANGELOG.md)
-- [版本发布页](https://github.com/ZHOUKAILIAN/agent-team-runtime/releases)
 - [Codex 运行 Help](docs/workflow-specs/2026-04-11-agent-team-codex-cli-help.md)
 - [Codex Harness 方案](docs/workflow-specs/2026-04-11-agent-team-codex-harness-solution.md)
 - [Stage 资产说明](docs/workflow-specs/2026-04-11-agent-team-skill-integration.md)
+- [变更记录](CHANGELOG.md)
 
-## 当前原则
+## 原则
 
-- CLI 是用户主入口
-- runtime 是流程事实来源
-- skill 不是流程控制器
-- evidence 不完整就不能算通过
-- Acceptance 只能建议，不能代替人工决策
-- 学习回流必须落到工程化状态，而不是只留在对话记忆里
-
-## 一句话总结
-
-`Agent Team` 现在应该被理解成一个面向 AI 的 CLI 编排运行时，而不是一个“会写代码的 prompt 套装”。
+- CLI 是用户主入口。
+- runtime 是流程事实来源。
+- skill 是阶段能力素材，不是流程控制器。
+- evidence 不完整就不能算通过。
+- Acceptance 只能建议，不能代替人工决策。
+- SessionHandoff 保留 L5 本地现场，但不自动升级为正式共享依据。

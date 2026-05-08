@@ -3,17 +3,10 @@ from __future__ import annotations
 from dataclasses import replace
 
 from .models import StageResultEnvelope, WorkflowSummary
+from .workflow import HUMAN_REWORK_TARGETS, STAGES, WAIT_STATES
 
 
-VALID_REWORK_TARGETS = {"Product", "Dev"}
 INTERACTIVE_RUNTIME_MODES = {"runtime_driver_interactive"}
-WAIT_STATES = {
-    "WaitForCEOApproval",
-    "WaitForTechnicalPlanApproval",
-    "WaitForDevApproval",
-    "WaitForQAApproval",
-    "WaitForHumanDecision",
-}
 
 
 class StageTransitionError(ValueError):
@@ -29,83 +22,130 @@ class StageMachine:
                 f"Cannot advance from {summary.current_state} without an explicit human decision."
             )
         if stage_result.status == "blocked":
-            return replace(
+            return _set_stage_status(
                 summary,
+                stage_result.stage,
+                "blocked",
                 current_state="Blocked",
                 current_stage=stage_result.stage,
                 blocked_reason=stage_result.summary or stage_result.blocked_reason or "Stage result is blocked.",
             )
 
-        if stage_result.stage == "Product":
-            return replace(
+        if stage_result.stage == "Route":
+            return _set_stage_status(
                 summary,
-                current_state="WaitForCEOApproval",
-                current_stage="ProductDraft",
-                prd_status="drafted",
+                "Route",
+                "completed",
+                current_state="ProductDefinition",
+                current_stage="ProductDefinition",
             )
-        if stage_result.stage == "Dev" and stage_result.artifact_name == "technical_plan.md":
-            return replace(
+
+        if stage_result.stage == "ProductDefinition":
+            return _set_stage_status(
                 summary,
-                current_state="WaitForTechnicalPlanApproval",
-                current_stage="Dev",
-                dev_status="plan_drafted",
+                "ProductDefinition",
+                "drafted",
+                current_state="WaitForProductDefinitionApproval",
+                current_stage="ProductDefinition",
+                human_decision="pending",
             )
-        if stage_result.stage == "Dev":
-            if _is_interactive_runtime(summary):
-                return replace(
-                    summary,
-                    current_state="WaitForDevApproval",
-                    current_stage="Dev",
-                    dev_status="completed",
-                )
-            return replace(
+
+        if stage_result.stage == "ProjectRuntime":
+            return _set_stage_status(
                 summary,
-                current_state="QA",
-                current_stage="QA",
-                dev_status="completed",
+                "ProjectRuntime",
+                "completed",
+                current_state="TechnicalDesign",
+                current_stage="TechnicalDesign",
             )
-        if stage_result.stage == "QA":
-            next_qa_round = summary.qa_round + 1
+
+        if stage_result.stage == "TechnicalDesign":
+            return _set_stage_status(
+                summary,
+                "TechnicalDesign",
+                "drafted",
+                current_state="WaitForTechnicalDesignApproval",
+                current_stage="TechnicalDesign",
+                human_decision="pending",
+            )
+
+        if stage_result.stage == "Implementation":
+            return _set_stage_status(
+                summary,
+                "Implementation",
+                "completed",
+                current_state="Verification",
+                current_stage="Verification",
+            )
+
+        if stage_result.stage == "Verification":
+            next_verification_round = summary.verification_round + 1
             if stage_result.status == "failed" or stage_result.findings:
-                return replace(
+                return _set_stage_status(
                     summary,
-                    current_state="Dev",
-                    current_stage="Dev",
-                    qa_status="failed",
-                    qa_round=next_qa_round,
+                    "Verification",
+                    "failed",
+                    current_state="Implementation",
+                    current_stage="Implementation",
+                    verification_round=next_verification_round,
                 )
-            if _is_interactive_runtime(summary):
-                return replace(
-                    summary,
-                    current_state="WaitForQAApproval",
-                    current_stage="QA",
-                    qa_status="passed",
-                    qa_round=next_qa_round,
-                )
-            return replace(
+            return _set_stage_status(
                 summary,
+                "Verification",
+                "passed",
+                current_state="GovernanceReview",
+                current_stage="GovernanceReview",
+                verification_round=next_verification_round,
+            )
+
+        if stage_result.stage == "GovernanceReview":
+            if stage_result.status == "failed" or stage_result.findings:
+                return _set_stage_status(
+                    summary,
+                    "GovernanceReview",
+                    "blocked",
+                    current_state="Blocked",
+                    current_stage="GovernanceReview",
+                    blocked_reason=stage_result.summary or "Governance review found blocking issues.",
+                )
+            return _set_stage_status(
+                summary,
+                "GovernanceReview",
+                "passed",
                 current_state="Acceptance",
                 current_stage="Acceptance",
-                qa_status="passed",
-                qa_round=next_qa_round,
             )
+
         if stage_result.stage == "Acceptance":
             acceptance_status = stage_result.acceptance_status or (
                 "blocked" if stage_result.findings else "recommended_go"
             )
             if acceptance_status == "blocked":
-                return replace(
+                return _set_stage_status(
                     summary,
+                    "Acceptance",
+                    "blocked",
                     current_state="Blocked",
                     current_stage="Acceptance",
                     acceptance_status=acceptance_status,
                     blocked_reason=stage_result.summary or "Acceptance result is blocked.",
                 )
-            return replace(
+            return _set_stage_status(
                 summary,
-                current_state="WaitForHumanDecision",
-                current_stage="Acceptance",
+                "Acceptance",
+                acceptance_status,
+                current_state="SessionHandoff",
+                current_stage="SessionHandoff",
                 acceptance_status=acceptance_status,
+            )
+
+        if stage_result.stage == "SessionHandoff":
+            return _set_stage_status(
+                summary,
+                "SessionHandoff",
+                "completed",
+                current_state="WaitForHumanDecision",
+                current_stage="SessionHandoff",
                 human_decision="pending",
             )
 
@@ -122,94 +162,55 @@ class StageMachine:
         if normalized not in {"go", "no-go", "rework"}:
             raise StageTransitionError(f"Unsupported human decision: {decision}")
 
-        if summary.current_state == "WaitForCEOApproval":
+        if summary.current_state == "WaitForProductDefinitionApproval":
             if normalized == "go":
-                return replace(
+                return _set_stage_status(
                     summary,
-                    current_state="Dev",
-                    current_stage="Dev",
-                    dev_status="planning",
+                    "ProductDefinition",
+                    "approved",
+                    current_state="ProjectRuntime",
+                    current_stage="ProjectRuntime",
                     human_decision=normalized,
                 )
             if normalized == "rework":
-                return replace(
+                return _set_stage_status(
                     summary,
-                    current_state="ProductDraft",
-                    current_stage="Product",
+                    "ProductDefinition",
+                    "rework_requested",
+                    current_state="ProductDefinition",
+                    current_stage="ProductDefinition",
                     human_decision=normalized,
                 )
             return replace(
                 summary,
                 current_state="Done",
-                current_stage="ProductDraft",
-                human_decision=normalized,
-                )
-
-        if summary.current_state == "WaitForTechnicalPlanApproval":
-            if normalized == "go":
-                return replace(
-                    summary,
-                    current_state="Dev",
-                    current_stage="Dev",
-                    dev_status="plan_approved",
-                    human_decision=normalized,
-                )
-            if normalized == "rework":
-                return replace(
-                    summary,
-                    current_state="Dev",
-                    current_stage="Dev",
-                    dev_status="planning",
-                    human_decision=normalized,
-                )
-            return replace(
-                summary,
-                current_state="Done",
-                current_stage="Dev",
+                current_stage="ProductDefinition",
                 human_decision=normalized,
             )
 
-        if summary.current_state == "WaitForDevApproval":
+        if summary.current_state == "WaitForTechnicalDesignApproval":
             if normalized == "go":
-                return replace(
+                return _set_stage_status(
                     summary,
-                    current_state="QA",
-                    current_stage="QA",
+                    "TechnicalDesign",
+                    "approved",
+                    current_state="Implementation",
+                    current_stage="Implementation",
                     human_decision=normalized,
                 )
             if normalized == "rework":
-                return replace(
+                return _set_stage_status(
                     summary,
-                    current_state="Dev",
-                    current_stage="Dev",
+                    "TechnicalDesign",
+                    "rework_requested",
+                    current_state="TechnicalDesign",
+                    current_stage="TechnicalDesign",
                     human_decision=normalized,
                 )
             return replace(
                 summary,
                 current_state="Done",
-                current_stage="Dev",
-                human_decision=normalized,
-            )
-
-        if summary.current_state == "WaitForQAApproval":
-            if normalized == "go":
-                return replace(
-                    summary,
-                    current_state="Acceptance",
-                    current_stage="Acceptance",
-                    human_decision=normalized,
-                )
-            if normalized == "rework":
-                return replace(
-                    summary,
-                    current_state="Dev",
-                    current_stage="Dev",
-                    human_decision=normalized,
-                )
-            return replace(
-                summary,
-                current_state="Done",
-                current_stage="QA",
+                current_stage="TechnicalDesign",
                 human_decision=normalized,
             )
 
@@ -218,14 +219,18 @@ class StageMachine:
                 return replace(
                     summary,
                     current_state="Done",
-                    current_stage="Acceptance",
+                    current_stage="SessionHandoff",
                     human_decision=normalized,
                 )
             target = target_stage or ""
-            if target not in VALID_REWORK_TARGETS:
-                raise StageTransitionError("Rework decisions require target_stage Product or Dev.")
-            return replace(
+            if target not in HUMAN_REWORK_TARGETS:
+                raise StageTransitionError(
+                    "Rework decisions require a five-layer target stage before SessionHandoff."
+                )
+            return _set_stage_status(
                 summary,
+                target,
+                "rework_requested",
                 current_state=target,
                 current_stage=target,
                 human_decision=normalized,
@@ -238,3 +243,9 @@ class StageMachine:
 
 def _is_interactive_runtime(summary: WorkflowSummary) -> bool:
     return summary.runtime_mode in INTERACTIVE_RUNTIME_MODES
+
+
+def _set_stage_status(summary: WorkflowSummary, stage: str, status: str, **changes: object) -> WorkflowSummary:
+    stage_statuses = dict(summary.stage_statuses)
+    stage_statuses[stage] = status
+    return replace(summary, stage_statuses=stage_statuses, **changes)

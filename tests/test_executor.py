@@ -63,7 +63,7 @@ class ExecutorTests(unittest.TestCase):
 
         with TemporaryDirectory() as temp_dir:
             executor = CodexExecutor(repo_root=Path(temp_dir), run=fake_run)
-            result = executor.execute(prompt="Prompt", output_dir=Path(temp_dir) / "out", stage="Dev")
+            result = executor.execute(prompt="Prompt", output_dir=Path(temp_dir) / "out", stage="Implementation")
 
         self.assertIsInstance(executor, StageExecutor)
         self.assertEqual(result.last_message, '{"status":"completed"}')
@@ -94,7 +94,7 @@ class ExecutorTests(unittest.TestCase):
 
         with TemporaryDirectory() as temp_dir:
             executor = ClaudeCodeExecutor(run=fake_run)
-            result = executor.execute(prompt="Prompt", output_dir=Path(temp_dir), stage="QA")
+            result = executor.execute(prompt="Prompt", output_dir=Path(temp_dir), stage="Verification")
 
         self.assertEqual(result.last_message, '{"status":"passed"}')
         self.assertEqual(calls[0][-1], "Prompt")

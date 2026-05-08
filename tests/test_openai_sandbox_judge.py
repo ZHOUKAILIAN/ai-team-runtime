@@ -57,7 +57,7 @@ class OpenAISandboxJudgeTests(unittest.TestCase):
             )
             return {
                 "verdict": "rework",
-                "target_stage": "Dev",
+                "target_stage": "Implementation",
                 "confidence": 0.87,
                 "reasons": ["Missing visual diff evidence."],
                 "missing_evidence": ["visual_diff_summary"],
@@ -83,7 +83,7 @@ class OpenAISandboxJudgeTests(unittest.TestCase):
         ).judge(Context())
 
         self.assertEqual(result.verdict, "rework")
-        self.assertEqual(result.target_stage, "Dev")
+        self.assertEqual(result.target_stage, "Implementation")
         self.assertEqual(result.confidence, 0.87)
         self.assertEqual(result.missing_evidence, ["visual_diff_summary"])
         self.assertEqual(calls[0]["model"], "gpt-test")
@@ -103,7 +103,7 @@ class OpenAISandboxJudgeTests(unittest.TestCase):
 
         class Context:
             def to_dict(self):
-                return {"stage": "QA", "required_output_schema": "JudgeResult"}
+                return {"stage": "Verification", "required_output_schema": "JudgeResult"}
 
         def fake_runner(
             *,
@@ -135,7 +135,7 @@ class OpenAISandboxJudgeTests(unittest.TestCase):
                 "findings": [
                     {
                         "source_stage": "Acceptance",
-                        "target_stage": "Dev",
+                        "target_stage": "Implementation",
                         "issue": "CTA button is misaligned.",
                         "severity": "high",
                     }
@@ -144,7 +144,7 @@ class OpenAISandboxJudgeTests(unittest.TestCase):
         )
 
         self.assertEqual(result.findings[0].source_stage, "Acceptance")
-        self.assertEqual(result.findings[0].target_stage, "Dev")
+        self.assertEqual(result.findings[0].target_stage, "Implementation")
         self.assertEqual(result.findings[0].issue, "CTA button is misaligned.")
 
     def test_invalid_verdict_is_rejected(self) -> None:
@@ -152,7 +152,7 @@ class OpenAISandboxJudgeTests(unittest.TestCase):
 
         class Context:
             def to_dict(self):
-                return {"stage": "QA", "required_output_schema": "JudgeResult"}
+                return {"stage": "Verification", "required_output_schema": "JudgeResult"}
 
         def fake_runner(
             *,

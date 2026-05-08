@@ -32,17 +32,17 @@ class GatekeeperTests(unittest.TestCase):
             session = store.create_session("build an enforced workflow")
             result = StageResultEnvelope(
                 session_id=session.session_id,
-                stage="Dev",
+                stage="Implementation",
                 status="completed",
                 artifact_name="implementation.md",
                 artifact_content="# Implementation\n",
-                contract_id="contract-dev",
+                contract_id="contract-implementation",
                 evidence=[],
             )
             contract = StageContract(
                 session_id=session.session_id,
-                stage="Dev",
-                contract_id="contract-dev",
+                stage="Implementation",
+                contract_id="contract-implementation",
                 goal="Implement",
                 required_outputs=["implementation.md"],
                 evidence_requirements=["self_verification"],
@@ -53,7 +53,7 @@ class GatekeeperTests(unittest.TestCase):
             self.assertEqual(gate.status, "FAILED")
             self.assertIn("self_verification", gate.missing_evidence)
 
-    def test_qa_findings_can_pass_stage_run_and_route_later(self) -> None:
+    def test_verification_findings_can_pass_stage_run_and_route_later(self) -> None:
         from agent_team.gatekeeper import Gatekeeper
         from agent_team.models import Finding, StageContract, StageResultEnvelope
         from agent_team.state import StateStore
@@ -63,20 +63,20 @@ class GatekeeperTests(unittest.TestCase):
             session = store.create_session("build an enforced workflow")
             result = StageResultEnvelope(
                 session_id=session.session_id,
-                stage="QA",
+                stage="Verification",
                 status="failed",
-                artifact_name="qa_report.md",
-                artifact_content="# QA\nRegression found.\n",
-                contract_id="contract-qa",
-                evidence=[evidence("independent_verification", kind="command", summary="QA reran verification.")],
-                findings=[Finding(source_stage="QA", target_stage="Dev", issue="Regression found.")],
+                artifact_name="verification-report.md",
+                artifact_content="# Verification\nRegression found.\n",
+                contract_id="contract-verification",
+                evidence=[evidence("independent_verification", kind="command", summary="Verification reran verification.")],
+                findings=[Finding(source_stage="Verification", target_stage="Implementation", issue="Regression found.")],
             )
             contract = StageContract(
                 session_id=session.session_id,
-                stage="QA",
-                contract_id="contract-qa",
+                stage="Verification",
+                contract_id="contract-verification",
                 goal="Verify",
-                required_outputs=["qa_report.md"],
+                required_outputs=["verification-report.md"],
                 evidence_requirements=["independent_verification"],
             )
 
@@ -126,11 +126,11 @@ class GatekeeperTests(unittest.TestCase):
             session = store.create_session("build an enforced workflow")
             result = StageResultEnvelope(
                 session_id=session.session_id,
-                stage="Dev",
+                stage="Implementation",
                 status="completed",
                 artifact_name="implementation.md",
                 artifact_content="# Implementation\n",
-                contract_id="contract-dev",
+                contract_id="contract-implementation",
                 evidence=[
                     {
                         "name": "self_verification",
@@ -142,8 +142,8 @@ class GatekeeperTests(unittest.TestCase):
             )
             contract = StageContract(
                 session_id=session.session_id,
-                stage="Dev",
-                contract_id="contract-dev",
+                stage="Implementation",
+                contract_id="contract-implementation",
                 goal="Implement",
                 required_outputs=["implementation.md"],
                 evidence_requirements=["self_verification"],
@@ -171,11 +171,11 @@ class GatekeeperTests(unittest.TestCase):
             session = store.create_session("build an enforced workflow")
             result = StageResultEnvelope(
                 session_id=session.session_id,
-                stage="Dev",
+                stage="Implementation",
                 status="completed",
                 artifact_name="implementation.md",
                 artifact_content="# Implementation\n",
-                contract_id="contract-dev",
+                contract_id="contract-implementation",
                 evidence=[
                     {
                         "name": "self_verification",
@@ -188,8 +188,8 @@ class GatekeeperTests(unittest.TestCase):
             )
             contract = StageContract(
                 session_id=session.session_id,
-                stage="Dev",
-                contract_id="contract-dev",
+                stage="Implementation",
+                contract_id="contract-implementation",
                 goal="Implement",
                 required_outputs=["implementation.md"],
                 evidence_requirements=["self_verification"],

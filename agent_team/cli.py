@@ -9,6 +9,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from .execution_context import build_stage_execution_context
+from .five_layer_init import DEFAULT_FIVE_LAYER_SKILL_SOURCE, run_five_layer_classification
 from .gatekeeper import evaluate_candidate
 from .harness_paths import default_state_root
 from .models import Finding, GateResult, StageResultEnvelope, WorkflowSummary
@@ -17,31 +18,49 @@ from .project_structure import ensure_project_structure
 from .skill_registry import STAGES, SOURCE_LABELS, SkillRegistry
 from .stage_contracts import build_stage_contract
 from .stage_machine import StageMachine
-from .state import StateStore, artifact_name_for_stage
+from .state import StateStore
+from .workflow import (
+    HUMAN_REWORK_TARGETS,
+    STAGES as WORKFLOW_STAGES,
+    WAIT_STATES,
+    artifact_key_for,
+)
 from .workspace_metadata import refresh_workspace_metadata
 
 
-RUN_REQUIREMENT_STAGE_ORDER = ("Product", "DevTechnicalPlan", "Dev", "QA", "Acceptance")
+RUN_REQUIREMENT_STAGE_ORDER = WORKFLOW_STAGES
 RUN_REQUIREMENT_STAGE_LABELS = {
-    "Product": "Product",
-    "DevTechnicalPlan": "Dev · 技术方案",
-    "Dev": "Dev",
-    "QA": "QA",
+    "Route": "Route",
+    "ProductDefinition": "Product Definition",
+    "ProjectRuntime": "Project Runtime",
+    "TechnicalDesign": "Technical Design",
+    "Implementation": "Implementation",
+    "Verification": "Verification",
+    "GovernanceReview": "Governance Review",
     "Acceptance": "Acceptance",
+    "SessionHandoff": "Session Handoff",
 }
 RUN_REQUIREMENT_STAGE_TITLES = {
-    "Product": "生成需求方案中",
-    "DevTechnicalPlan": "生成 Dev 技术方案中",
-    "Dev": "执行开发实现中",
-    "QA": "执行 QA 验证中",
+    "Route": "路由需求和五层影响中",
+    "ProductDefinition": "生成 L1 产品定义 delta 中",
+    "ProjectRuntime": "生成 L3 项目落地 delta 中",
+    "TechnicalDesign": "生成 L2 技术设计中",
+    "Implementation": "执行 L2 实现中",
+    "Verification": "执行独立验证中",
+    "GovernanceReview": "执行 L4 治理审查中",
     "Acceptance": "执行验收判断中",
+    "SessionHandoff": "生成 L5 会话接力中",
 }
 RUN_REQUIREMENT_STAGE_ACTIVITY_STEPS = {
-    "Product": ("读取需求", "提炼目标边界", "链接验收文档", "写入 PRD", "生成验收方案"),
-    "DevTechnicalPlan": ("读取 PRD", "确认影响范围", "拆实现步骤", "整理验证策略", "写技术方案"),
-    "Dev": ("读取技术方案", "定位改动文件", "应用代码变更", "记录自检结果", "整理实现文档"),
-    "QA": ("读取验收方案", "运行验证命令", "检查产物证据", "整理 QA 结论"),
-    "Acceptance": ("读取交付产物", "核对验收方案", "汇总风险证据", "形成最终建议"),
+    "Route": ("读取需求", "识别层级", "检查红线", "整理基线", "写路由包"),
+    "ProductDefinition": ("读取路由包", "识别 L1 候选", "下沉非 L1", "记录冲突", "写 delta"),
+    "ProjectRuntime": ("读取 L1 delta", "识别入口", "整理目录/运行默认", "检查 L3 边界", "写落地 delta"),
+    "TechnicalDesign": ("读取 L1/L3", "确认影响范围", "拆实现步骤", "整理验证策略", "写技术设计"),
+    "Implementation": ("读取技术设计", "定位改动文件", "应用代码变更", "记录自检结果", "整理实现文档"),
+    "Verification": ("读取实现结果", "运行验证命令", "检查证据", "记录问题", "整理验证报告"),
+    "GovernanceReview": ("读取全量产物", "检查层级红线", "检查证据", "确认回写目标", "写治理审查"),
+    "Acceptance": ("读取交付产物", "核对治理证据", "汇总风险证据", "形成最终建议"),
+    "SessionHandoff": ("读取最终状态", "整理下一步", "保留本地现场", "标记未决项", "写接力文档"),
 }
 RUN_REQUIREMENT_TRACE_STEP_LABELS = {
     "contract_built": "生成阶段契约",
@@ -55,18 +74,20 @@ RUN_REQUIREMENT_TRACE_STEP_LABELS = {
 }
 RUN_REQUIREMENT_SPINNER_FRAMES = ("◐", "◓", "◑", "◒")
 RUN_REQUIREMENT_WAIT_TO_STAGE = {
-    "WaitForCEOApproval": "Product",
-    "WaitForTechnicalPlanApproval": "DevTechnicalPlan",
-    "WaitForDevApproval": "Dev",
-    "WaitForQAApproval": "QA",
-    "WaitForHumanDecision": "Acceptance",
+    "WaitForProductDefinitionApproval": "ProductDefinition",
+    "WaitForTechnicalDesignApproval": "TechnicalDesign",
+    "WaitForHumanDecision": "SessionHandoff",
 }
 RUN_REQUIREMENT_STAGE_DOCS = {
-    "Product": ("Product Requirements", "product", "product-requirements.md"),
-    "DevTechnicalPlan": ("Technical Plan", "technical_plan", "technical_plan.md"),
-    "Dev": ("Implementation", "dev", "implementation.md"),
-    "QA": ("QA Report", "qa", "qa_report.md"),
-    "Acceptance": ("Acceptance Report", "acceptance", "acceptance_report.md"),
+    "Route": ("Route Packet", "route", "route-packet.json"),
+    "ProductDefinition": ("Product Definition Delta", "product_definition", "product-definition-delta.md"),
+    "ProjectRuntime": ("Project Landing Delta", "project_runtime", "project-landing-delta.md"),
+    "TechnicalDesign": ("Technical Design", "technical_design", "technical-design.md"),
+    "Implementation": ("Implementation", "implementation", "implementation.md"),
+    "Verification": ("Verification Report", "verification", "verification-report.md"),
+    "GovernanceReview": ("Governance Review", "governance_review", "governance-review.md"),
+    "Acceptance": ("Acceptance Report", "acceptance", "acceptance-report.md"),
+    "SessionHandoff": ("Session Handoff", "session_handoff", "session-handoff.md"),
 }
 
 
@@ -133,6 +154,31 @@ def build_parser() -> argparse.ArgumentParser:
             "Use this once per clone before running the workflow."
         ),
     )
+    init_parser.add_argument(
+        "--five-layer-classification",
+        choices=["auto", "run", "skip"],
+        default="auto",
+        help=(
+            "Five-layer init classification mode. auto runs codex exec only from an interactive terminal, "
+            "run forces codex exec, and skip records the init structure without running classification."
+        ),
+    )
+    init_parser.add_argument(
+        "--five-layer-timeout-seconds",
+        type=int,
+        default=1800,
+        help="Timeout for the init-time codex exec five-layer classification run.",
+    )
+    init_parser.add_argument(
+        "--five-layer-codex-bin",
+        default="codex",
+        help="Codex executable used by init-time five-layer classification.",
+    )
+    init_parser.add_argument(
+        "--five-layer-skill-source",
+        default=DEFAULT_FIVE_LAYER_SKILL_SOURCE,
+        help="Remote source URL for the five-layer-classifier skill used during init.",
+    )
     init_parser.set_defaults(handler=_handle_init)
 
     run_requirement_parser = subparsers.add_parser(
@@ -140,8 +186,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Drive an Agent Team requirement through runtime-controlled stage execution.",
         description=(
             "Create or resume an Agent Team session and let the runtime acquire, execute, submit, "
-            "verify, and advance each executable stage. Product, Dev technical plan, and final "
-            "acceptance gates are always preserved."
+            "verify, and advance each executable stage. ProductDefinition, TechnicalDesign, "
+            "and final SessionHandoff gates are always preserved."
         ),
     )
     run_requirement_target = run_requirement_parser.add_mutually_exclusive_group(required=False)
@@ -171,8 +217,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--auto",
         action="store_true",
         help=(
-            "After the technical plan is approved, automatically pass Dev implementation and QA. "
-            "Product approval, Dev technical plan approval, and final Acceptance decision remain human-gated."
+            "Automatically pass non-human intermediate stages. ProductDefinition approval, "
+            "TechnicalDesign approval, and final Go/No-Go remain human-gated."
         ),
     )
     run_requirement_parser.add_argument(
@@ -229,7 +275,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         help=(
-            "Enable skills for this run, e.g. Dev:plan or QA:security-audit. "
+            "Enable skills for this run, e.g. Implementation:plan or Verification:security-audit. "
             "Without this flag, run uses .agent-team/skill-preferences.yaml defaults."
         ),
     )
@@ -237,7 +283,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--skip-skills",
         action="append",
         default=[],
-        help="Skip configured skills for this run, e.g. qa:security-audit.",
+        help="Skip configured skills for this run, e.g. Verification:security-audit.",
     )
     run_requirement_parser.add_argument("--skills-empty", action="store_true", help="Run without skills for this invocation.")
     run_requirement_parser.set_defaults(handler=_handle_run_requirement)
@@ -322,7 +368,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     human_decision_parser.add_argument("--session-id", required=True, help="Existing workflow session ID.")
     human_decision_parser.add_argument("--decision", required=True, help="One of go, no-go, rework.")
-    human_decision_parser.add_argument("--target-stage", help="Required for rework decisions from acceptance.")
+    human_decision_parser.add_argument("--target-stage", help="Required for final rework decisions from SessionHandoff.")
     human_decision_parser.set_defaults(handler=_handle_record_human_decision)
 
     feedback_parser = subparsers.add_parser(
@@ -331,7 +377,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     feedback_parser.add_argument("--session-id", required=True, help="Existing workflow session ID.")
     feedback_parser.add_argument("--source-stage", required=True, help="Stage where the feedback originated.")
-    feedback_parser.add_argument("--target-stage", required=True, help="Role that should learn from the feedback.")
+    feedback_parser.add_argument("--target-stage", required=True, help="Stage that should learn from the feedback.")
     feedback_parser.add_argument("--issue", required=True, help="Issue summary.")
     feedback_parser.add_argument("--severity", default="medium", help="Feedback severity.")
     feedback_parser.add_argument("--lesson", default="", help="Reusable lesson to store.")
@@ -404,12 +450,25 @@ def _handle_init(args: argparse.Namespace) -> int:
     store = StateStore(args.state_root)
     store.ensure_layout()
     structure = ensure_project_structure(args.repo_root)
+    five_layer = run_five_layer_classification(
+        repo_root=structure.repo_root,
+        project_root=structure.project_root,
+        mode=args.five_layer_classification,
+        interactive=sys.stdin.isatty() and sys.stdout.isatty(),
+        timeout_seconds=args.five_layer_timeout_seconds,
+        codex_bin=args.five_layer_codex_bin,
+        skill_source=args.five_layer_skill_source,
+    )
     print(f"state_root: {args.state_root}")
     print(f"repo_root: {structure.repo_root}")
     print(f"project_root: {structure.project_root}")
     print(f"doc_map_path: {structure.doc_map_path}")
     print(f"used_default_docs: {structure.used_default_docs}")
     print(f"doc_map: {json.dumps(structure.doc_map, ensure_ascii=False, sort_keys=True)}")
+    print(f"five_layer_classification_status: {five_layer.status}")
+    print(f"five_layer_classification_reason: {five_layer.reason}")
+    print(f"five_layer_classification_report: {five_layer.report_path}")
+    print(f"five_layer_classification_metadata: {five_layer.metadata_path}")
     return 0
 
 
@@ -510,7 +569,7 @@ def _handle_run_requirement_interactive(args: argparse.Namespace, *, message: st
     header_printed = False
 
     while True:
-        running_stage = "Product"
+        running_stage = "Route"
         running_completed = 0
         animate_stage_run = False
         activity_provider = None
@@ -649,7 +708,7 @@ def _handle_run_requirement_interactive(args: argparse.Namespace, *, message: st
 
 
 def _run_requirement_should_auto_approve_stage(args: argparse.Namespace, stage: str) -> bool:
-    return bool(args.auto) and stage in {"Dev", "QA"}
+    return bool(args.auto) and stage not in {"ProductDefinition", "TechnicalDesign", "SessionHandoff"}
 
 
 def _print_run_requirement_stage_banner(*, stage: str, completed: int) -> None:
@@ -743,8 +802,6 @@ def _runtime_trace_activity_provider(*, store: StateStore, session_id: str, stag
 
 
 def _runtime_stage_for_run_requirement_stage(stage: str) -> str:
-    if stage == "DevTechnicalPlan":
-        return "Dev"
     return stage
 
 
@@ -789,13 +846,6 @@ def _print_run_requirement_stage_report(
             print(f"- {line}")
     print("文档:")
     print(f"- {label}: {doc_path}")
-    if stage == "Product":
-        acceptance_plan_path = (
-            summary.artifact_paths.get("acceptance_plan")
-            or summary.artifact_paths.get("acceptance_plan.md")
-            or str(session.artifact_dir / "acceptance_plan.md")
-        )
-        print(f"- Acceptance Plan: {acceptance_plan_path}")
     if model_output == "raw":
         print("调试信息:")
         _print_runtime_driver_result(result)
@@ -821,35 +871,57 @@ def _run_requirement_stage_summary_lines(
     auto_approving: bool = False,
 ) -> list[str]:
     del summary
-    if stage == "Product":
+    if stage == "Route":
         return [
-            "已解析原始需求",
-            "已整理目标、边界和验收文档链接",
-            "已写入 PRD",
-            "已写入独立验收方案",
+            "已完成需求路由和五层影响判断",
+            "已记录红线和需要执行的阶段",
+            "已写入 route-packet.json",
         ]
-    if stage == "DevTechnicalPlan":
+    if stage == "ProductDefinition":
         return [
-            "已确认 PRD 作为技术方案输入",
+            "已识别 L1 产品定义候选",
+            "已把非 L1 内容下沉到对应层",
+            "已写入 product-definition-delta.md",
+        ]
+    if stage == "ProjectRuntime":
+        return [
+            "已整理 L3 项目落地默认做法",
+            "已检查未重写 L1 或伪装成 L4",
+            "已写入 project-landing-delta.md",
+        ]
+    if stage == "TechnicalDesign":
+        return [
+            "已确认 L1/L3 delta 作为技术设计输入",
             "已拆分实现步骤和验证方式",
-            "已写入 technical_plan.md",
+            "已写入 technical-design.md",
         ]
-    if stage == "Dev":
+    if stage == "Implementation":
         return [
             "已根据技术方案完成实现",
             "已记录自检和改动文件",
             "已写入 implementation.md",
         ]
-    if stage == "QA":
+    if stage == "Verification":
         return [
             "已独立验证实现结果",
-            "已记录 QA 结论和发现",
-            "已写入 qa_report.md",
+            "已记录验证结论和发现",
+            "已写入 verification-report.md",
+        ]
+    if stage == "GovernanceReview":
+        return [
+            "已检查五层边界和红线",
+            "已记录证据质量和回写义务",
+            "已写入 governance-review.md",
         ]
     if stage == "Acceptance":
         return [
-            "已按验收方案汇总结论",
-            "已写入 acceptance_report.md",
+            "已按产品结果和治理证据汇总结论",
+            "已写入 acceptance-report.md",
+        ]
+    if stage == "SessionHandoff":
+        return [
+            "已保留 L5 本地现场和下一步",
+            "已写入 session-handoff.md",
             "等待最终人工决策",
         ]
     return [
@@ -858,24 +930,23 @@ def _run_requirement_stage_summary_lines(
 
 
 def _run_requirement_next_step_text(stage: str) -> str:
-    if stage == "Product":
-        return "请打开 PRD 文档确认需求方案，并从其中链接进入验收方案。"
-    if stage == "DevTechnicalPlan":
-        return "请打开技术方案文档确认实现路径和验证方式是否通过。"
-    if stage == "Dev":
-        return "请打开实现文档确认代码改动和自检结果是否通过。"
-    if stage == "QA":
-        return "请打开 QA 报告确认验证结果是否通过。"
+    if stage == "ProductDefinition":
+        return "请打开 L1 delta 文档确认哪些进入产品定义，哪些不是 L1。"
+    if stage == "TechnicalDesign":
+        return "请打开技术设计文档确认实现路径和验证方式是否通过。"
+    if stage == "SessionHandoff":
+        return "请打开接力文档并确认最终决策。"
     if stage == "Acceptance":
-        return "请打开验收报告并确认最终决策。"
+        return "请打开验收报告确认 AI 最终建议。"
     return "请确认当前阶段是否通过。"
 
 
 def _run_requirement_auto_next_step_text(stage: str) -> str:
-    next_stage = {
-        "Dev": "QA",
-        "QA": "Acceptance",
-    }.get(stage, "下一阶段")
+    try:
+        index = RUN_REQUIREMENT_STAGE_ORDER.index(stage)
+        next_stage = RUN_REQUIREMENT_STAGE_ORDER[index + 1]
+    except (ValueError, IndexError):
+        next_stage = "下一阶段"
     return f"--auto 已启用，将自动通过 {_run_requirement_stage_label(stage)} 并进入 {_run_requirement_stage_label(next_stage)}。"
 
 
@@ -915,7 +986,7 @@ def _clear_run_requirement_blocker(*, store: StateStore, summary: WorkflowSummar
     current_stage = summary.current_stage
     runtime_stage = _runtime_stage_for_run_requirement_stage(stage)
     if current_state == "Blocked":
-        current_state = runtime_stage if runtime_stage in {"Product", "Dev", "QA", "Acceptance"} else "Product"
+        current_state = runtime_stage if runtime_stage in WORKFLOW_STAGES else "Route"
         current_stage = current_state
     store.save_workflow_summary(
         session,
@@ -1028,8 +1099,8 @@ def _prompt_run_requirement_decision(
             return {"action": "quit"}
         if choice.requires_issue:
             issue = input("修改意见：").strip()
-            if stage == "Acceptance" and choice.decision == "rework":
-                target_stage = _prompt_acceptance_rework_target()
+            if stage == "SessionHandoff" and choice.decision == "rework":
+                target_stage = _prompt_session_handoff_rework_target()
                 return {
                     "action": "apply",
                     "decision": choice.decision,
@@ -1046,10 +1117,20 @@ def _prompt_run_requirement_decision(
             return {"action": "apply", "decision": choice.decision, "target_stage": choice.target_stage}
 
 
-def _prompt_acceptance_rework_target() -> str:
+def _prompt_session_handoff_rework_target() -> str:
+    target_labels = {
+        "Route": ("r", "Route 重新判断五层路由", ("route",)),
+        "ProductDefinition": ("p", "ProductDefinition 重新澄清 L1 delta", ("productdefinition", "product-definition", "product")),
+        "ProjectRuntime": ("l", "ProjectRuntime 重新整理 L3 落地默认", ("projectruntime", "project-runtime", "runtime")),
+        "TechnicalDesign": ("t", "TechnicalDesign 重新生成技术设计", ("technicaldesign", "technical-design", "design")),
+        "Implementation": ("i", "Implementation 根据意见返工实现", ("implementation", "impl")),
+        "Verification": ("v", "Verification 重新独立验证", ("verification", "verify")),
+        "GovernanceReview": ("g", "GovernanceReview 重新检查治理红线", ("governancereview", "governance-review", "governance")),
+    }
     choices = [
-        RunRequirementMenuChoice("p", "Product 重新澄清需求和验收方案", "target", target_stage="Product", aliases=("product",)),
-        RunRequirementMenuChoice("d", "Dev 根据意见返工实现", "target", target_stage="Dev", aliases=("dev",)),
+        RunRequirementMenuChoice(key, label, "target", target_stage=stage, aliases=aliases)
+        for stage, (key, label, aliases) in target_labels.items()
+        if stage in HUMAN_REWORK_TARGETS
     ]
     while True:
         print("返工目标：")
@@ -1061,31 +1142,23 @@ def _prompt_acceptance_rework_target() -> str:
 
 def _run_requirement_decision_choices(stage: str) -> list[RunRequirementMenuChoice]:
     labels = {
-        "Product": {
-            "go": "通过需求方案，进入技术方案",
-            "rework": "提交修改意见，重新生成 PRD 和验收方案",
-            "print": "重新打印 PRD 和验收方案路径",
+        "ProductDefinition": {
+            "go": "通过 L1 产品定义 delta，进入 L3 项目落地",
+            "no_go": "不通过 L1 产品定义 delta，结束为 no-go",
+            "rework": "提交修改意见，重新生成 L1 产品定义 delta",
+            "print": "重新打印 L1 delta 文档路径",
         },
-        "DevTechnicalPlan": {
-            "go": "通过技术方案，进入开发实现",
-            "rework": "提交修改意见，重新生成技术方案",
-            "print": "重新打印技术方案路径",
+        "TechnicalDesign": {
+            "go": "通过技术设计，进入 Implementation",
+            "no_go": "不通过技术设计，结束为 no-go",
+            "rework": "提交修改意见，重新生成技术设计",
+            "print": "重新打印技术设计文档路径",
         },
-        "Dev": {
-            "go": "通过实现结果，进入 QA",
-            "rework": "提交修改意见，打回 Dev",
-            "print": "重新打印实现文档路径",
-        },
-        "QA": {
-            "go": "通过 QA，进入验收",
-            "rework": "提交修改意见，打回 Dev",
-            "print": "重新打印 QA 报告路径",
-        },
-        "Acceptance": {
-            "go": "通过验收，完成交付",
-            "no_go": "不通过验收，结束为 no-go",
+        "SessionHandoff": {
+            "go": "通过最终交付，完成本次任务",
+            "no_go": "不通过最终交付，结束为 no-go",
             "rework": "提交修改意见，选择返工目标",
-            "print": "重新打印验收报告路径",
+            "print": "重新打印 L5 接力文档路径",
         },
     }.get(
         stage,
@@ -1098,7 +1171,7 @@ def _run_requirement_decision_choices(stage: str) -> list[RunRequirementMenuChoi
     choices = [
         RunRequirementMenuChoice("y", labels["go"], "apply", decision="go", aliases=("yes",)),
     ]
-    if stage == "Acceptance":
+    if "no_go" in labels:
         choices.append(
             RunRequirementMenuChoice("n", labels["no_go"], "apply", decision="no-go", aliases=("no",))
         )
@@ -1140,11 +1213,7 @@ def _read_run_requirement_menu_choice(choices: list[RunRequirementMenuChoice]) -
 
 
 def _run_requirement_rework_target(stage: str) -> str:
-    if stage == "DevTechnicalPlan":
-        return "Dev"
-    if stage == "QA":
-        return "Dev"
-    return stage
+    return "" if stage == "SessionHandoff" else stage
 
 
 def _print_run_requirement_document_link(*, store: StateStore, summary: WorkflowSummary, stage: str) -> None:
@@ -1207,43 +1276,28 @@ def _run_requirement_resume_command(args: argparse.Namespace, session_id: str) -
 def _run_requirement_stage_for_summary(summary: WorkflowSummary) -> str:
     if summary.current_state in RUN_REQUIREMENT_WAIT_TO_STAGE:
         return RUN_REQUIREMENT_WAIT_TO_STAGE[summary.current_state]
-    if summary.current_state == "Dev" and _summary_needs_dev_technical_plan(summary):
-        return "DevTechnicalPlan"
     if summary.current_state in RUN_REQUIREMENT_STAGE_ORDER:
         return summary.current_state
-    if summary.current_state in {"Intake", "ProductDraft"}:
-        return "Product"
+    if summary.current_state == "Intake":
+        return "Route"
     if summary.current_stage in RUN_REQUIREMENT_STAGE_ORDER:
         return summary.current_stage
-    return "Product"
+    return "Route"
 
 
 def _run_requirement_completed_stage_count(summary: WorkflowSummary) -> int:
-    if summary.current_state in {"Intake", "ProductDraft"}:
+    if summary.current_state == "Intake":
         return 0
-    if summary.current_state == "Dev" and _summary_needs_dev_technical_plan(summary):
-        return 1
-    if summary.current_state == "WaitForCEOApproval":
-        return 1
-    if summary.current_state in {"WaitForTechnicalPlanApproval", "Dev"}:
-        return 2
-    if summary.current_state in {"WaitForDevApproval", "QA"}:
-        return 3
-    if summary.current_state in {"WaitForQAApproval", "Acceptance"}:
-        return 4
     if summary.current_state in {"WaitForHumanDecision", "Done"}:
-        return 5
+        return len(RUN_REQUIREMENT_STAGE_ORDER)
+    if summary.current_state in RUN_REQUIREMENT_WAIT_TO_STAGE:
+        stage = RUN_REQUIREMENT_WAIT_TO_STAGE[summary.current_state]
+        return RUN_REQUIREMENT_STAGE_ORDER.index(stage) + 1
+    if summary.current_state in RUN_REQUIREMENT_STAGE_ORDER:
+        return RUN_REQUIREMENT_STAGE_ORDER.index(summary.current_state)
     if summary.current_state == "Blocked" and summary.current_stage in RUN_REQUIREMENT_STAGE_ORDER:
         return RUN_REQUIREMENT_STAGE_ORDER.index(summary.current_stage)
     return 0
-
-
-def _summary_needs_dev_technical_plan(summary: WorkflowSummary) -> bool:
-    if summary.current_state != "Dev":
-        return False
-    if summary.dev_status in {"pending", "planning"}:
-        return True
-    return not bool(summary.artifact_paths.get("technical_plan"))
 
 
 def _render_progress_bar(completed: int, total: int, width: int = 10) -> str:
@@ -1472,7 +1526,7 @@ def _evaluate_stage_result_for_verification(
 
     from .gate_evaluator import GateEvaluator, NoopJudge
     from .openai_sandbox_judge import OpenAISandboxJudge, OpenAISandboxJudgeUnavailable
-    from .stage_policies import default_policy_registry, dev_technical_plan_policy
+    from .stage_policies import default_policy_registry
 
     judge = (
         OpenAISandboxJudge(
@@ -1491,11 +1545,11 @@ def _evaluate_stage_result_for_verification(
     try:
         evaluation = GateEvaluator(judge=judge).evaluate(
             session=session,
-            policy=_policy_for_stage_result(result, default_policy_registry(), dev_technical_plan_policy),
+            policy=_policy_for_stage_result(result, default_policy_registry()),
             contract=contract,
             result=result,
             original_request_summary=session.request,
-            approved_prd_summary=_approved_prd_summary(summary=summary, result=result),
+            approved_product_definition_summary=_approved_product_definition_summary(summary=summary, result=result),
             approved_acceptance_matrix=_load_acceptance_matrix(args.acceptance_matrix),
         )
     except OpenAISandboxJudgeUnavailable as exc:
@@ -1615,14 +1669,10 @@ def _save_next_execution_context_if_needed(
 
 
 def _artifact_key_for_stage_result(result: StageResultEnvelope) -> str:
-    if result.stage == "Dev" and result.artifact_name == "technical_plan.md":
-        return "technical_plan"
-    return result.stage.lower()
+    return artifact_key_for(result.stage)
 
 
-def _policy_for_stage_result(result: StageResultEnvelope, registry, dev_plan_policy_factory):
-    if result.stage == "Dev" and result.artifact_name == "technical_plan.md":
-        return dev_plan_policy_factory()
+def _policy_for_stage_result(result: StageResultEnvelope, registry):
     return registry.get(result.stage)
 
 
@@ -1693,13 +1743,7 @@ def _handle_status(args: argparse.Namespace) -> int:
     if args.verbose:
         summary = store.load_workflow_summary(session_id)
         _print_summary(summary)
-        if summary.current_state in {
-            "WaitForCEOApproval",
-            "WaitForTechnicalPlanApproval",
-            "WaitForDevApproval",
-            "WaitForQAApproval",
-            "WaitForHumanDecision",
-        }:
+        if summary.current_state in WAIT_STATES:
             print("next_action: record-human-decision")
             return 0
         active_run = store.active_stage_run(session_id)
@@ -1790,16 +1834,12 @@ def _load_acceptance_matrix(path: Path | None) -> list[dict[str, object]]:
     return [dict(item) for item in payload]
 
 
-def _approved_prd_summary(*, summary: WorkflowSummary, result: StageResultEnvelope) -> str:
-    if result.stage == "Product" and result.artifact_name in {artifact_name_for_stage("Product"), "prd.md"}:
+def _approved_product_definition_summary(*, summary: WorkflowSummary, result: StageResultEnvelope) -> str:
+    if result.stage == "ProductDefinition":
         return result.artifact_content[:4000]
-    prd_path = (
-        summary.artifact_paths.get("product")
-        or summary.artifact_paths.get("product_requirements")
-        or summary.artifact_paths.get("prd")
-    )
-    if prd_path and Path(prd_path).exists():
-        return Path(prd_path).read_text()[:4000]
+    product_definition_path = summary.artifact_paths.get("product_definition")
+    if product_definition_path and Path(product_definition_path).exists():
+        return Path(product_definition_path).read_text()[:4000]
     return ""
 
 
@@ -1833,14 +1873,10 @@ def _judge_result_to_dict(judge_result) -> dict[str, object] | None:
 
 
 def _expected_submission_stage(summary: WorkflowSummary) -> str | None:
-    if summary.current_state in {"Intake", "ProductDraft"}:
-        return "Product"
-    if summary.current_state == "Dev":
-        return "Dev"
-    if summary.current_state == "QA":
-        return "QA"
-    if summary.current_state == "Acceptance":
-        return "Acceptance"
+    if summary.current_state == "Intake":
+        return "Route"
+    if summary.current_state in WORKFLOW_STAGES:
+        return summary.current_state
     return None
 
 

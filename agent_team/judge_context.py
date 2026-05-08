@@ -82,7 +82,7 @@ class JudgeContextCompact:
     session_id: str
     stage: str
     original_request_summary: str
-    approved_prd_summary: str
+    approved_product_definition_summary: str
     stage_policy: StagePolicy
     stage_contract: StageContract
     stage_result_status: str
@@ -98,7 +98,7 @@ class JudgeContextCompact:
             "session_id": self.session_id,
             "stage": self.stage,
             "original_request_summary": self.original_request_summary,
-            "approved_prd_summary": self.approved_prd_summary,
+            "approved_product_definition_summary": self.approved_product_definition_summary,
             "stage_policy": _policy_to_dict(self.stage_policy),
             "stage_contract": self.stage_contract.to_dict(),
             "stage_result_status": self.stage_result_status,
@@ -119,7 +119,7 @@ def build_judge_context_compact(
     result: StageResultEnvelope,
     hard_gate_result: GateResult,
     original_request_summary: str,
-    approved_prd_summary: str,
+    approved_product_definition_summary: str,
     approved_acceptance_matrix: list[dict[str, Any]],
     previous_findings: list[Finding] | None = None,
 ) -> JudgeContextCompact:
@@ -127,7 +127,7 @@ def build_judge_context_compact(
         session_id=result.session_id,
         stage=result.stage,
         original_request_summary=original_request_summary,
-        approved_prd_summary=approved_prd_summary,
+        approved_product_definition_summary=approved_product_definition_summary,
         stage_policy=policy,
         stage_contract=contract,
         stage_result_status=result.status,

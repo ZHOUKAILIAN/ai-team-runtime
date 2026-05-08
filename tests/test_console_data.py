@@ -24,7 +24,7 @@ class ConsoleDataTests(unittest.TestCase):
             blocked_session = store.create_session("fix websocket reconnect")
             blocked_summary = store.load_workflow_summary(blocked_session.session_id)
             blocked_summary.current_state = "Blocked"
-            blocked_summary.current_stage = "QA"
+            blocked_summary.current_stage = "Verification"
             blocked_summary.blocked_reason = "Missing build evidence."
             store.save_workflow_summary(blocked_session, blocked_summary)
             refresh_workspace_metadata(state_root=state_root, repo_root=repo_root)

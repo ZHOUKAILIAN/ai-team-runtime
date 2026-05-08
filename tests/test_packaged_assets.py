@@ -8,8 +8,8 @@ class PackagedAssetTests(unittest.TestCase):
         from agent_team.packaged_assets import copy_packaged_tree
 
         with TemporaryDirectory() as temp_dir:
-            target = Path(temp_dir) / "product-role"
-            written = copy_packaged_tree(("roles", "Product"), target)
+            target = Path(temp_dir) / "product-definition-role"
+            written = copy_packaged_tree(("roles", "ProductDefinition"), target)
 
             self.assertTrue((target / "contract.md").exists())
             self.assertTrue((target / "context.md").exists())

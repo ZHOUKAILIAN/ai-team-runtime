@@ -19,7 +19,7 @@ def apply_stage_gates(
     blocked_reason = output.blocked_reason
     acceptance_status = output.acceptance_status
 
-    if output.stage in {"QA", "Acceptance"} and (
+    if output.stage in {"Verification", "GovernanceReview", "Acceptance"} and (
         _requires_host_environment_change(output.artifact_content)
         or any(_requires_host_environment_change(item.issue) for item in findings)
     ):
@@ -111,7 +111,7 @@ def _evaluate_review_completion(
         findings.append(
             Finding(
                 source_stage="Acceptance",
-                target_stage="Dev",
+                target_stage="Implementation",
                 issue="Review is missing required runtime evidence: " + ", ".join(missing_evidence),
                 severity="high",
                 evidence_kind="review_completion_gate",

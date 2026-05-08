@@ -7,9 +7,9 @@ from pathlib import Path
 from typing import Iterable
 
 from .packaged_assets import ASSET_ROOT
+from .workflow import STAGES, normalize_stage
 
 
-STAGES = ("Product", "Dev", "QA", "Acceptance")
 SOURCE_ORDER = {"builtin": 0, "personal": 1, "project": 2}
 SOURCE_LABELS = {"builtin": "built-in", "personal": "personal", "project": "project"}
 SOURCE_SCOPES = {"builtin": "global", "personal": "global", "project": "project"}
@@ -277,11 +277,7 @@ def _personal_skill_roots() -> list[Path]:
 
 
 def _normalize_stage(stage: str) -> str:
-    lowered = stage.lower()
-    for known in STAGES:
-        if known.lower() == lowered:
-            return known
-    raise ValueError(f"Unknown stage: {stage}")
+    return normalize_stage(stage)
 
 
 def _parse_preferences(raw: str) -> SkillPreferences:

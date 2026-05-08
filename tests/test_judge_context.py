@@ -13,7 +13,7 @@ class JudgeContextTests(unittest.TestCase):
             session_id="session-1",
             stage="Acceptance",
             contract_id="contract-acceptance",
-            input_artifacts={"prd": ".agent-team/session/product-requirements.md"},
+            input_artifacts={"product_definition": ".agent-team/session/product-definition-delta.md"},
         )
         result = StageResultEnvelope(
             session_id="session-1",
@@ -39,14 +39,14 @@ class JudgeContextTests(unittest.TestCase):
             result=result,
             hard_gate_result=hard_gate,
             original_request_summary="Restore the Figma UI.",
-            approved_prd_summary="Match the approved Figma frame.",
+            approved_product_definition_summary="Match the approved Figma frame.",
             approved_acceptance_matrix=[
                 {
                     "id": "AC-001",
                     "scenario": "Figma restoration",
                     "standard": "UI matches the approved frame.",
                     "required_evidence": ["product_level_validation"],
-                    "failure_target": "Dev",
+                    "failure_target": "Implementation",
                 }
             ],
         )

@@ -173,12 +173,10 @@ class WorkflowSummary:
     runtime_mode: str
     current_state: str
     current_stage: str
-    prd_status: str = "pending"
-    dev_status: str = "pending"
-    qa_status: str = "pending"
+    stage_statuses: dict[str, str] = field(default_factory=dict)
     acceptance_status: str = "pending"
     human_decision: str = "pending"
-    qa_round: int = 0
+    verification_round: int = 0
     blocked_reason: str = ""
     artifact_paths: dict[str, str] = field(default_factory=dict)
 
@@ -188,12 +186,10 @@ class WorkflowSummary:
             "runtime_mode": self.runtime_mode,
             "current_state": self.current_state,
             "current_stage": self.current_stage,
-            "prd_status": self.prd_status,
-            "dev_status": self.dev_status,
-            "qa_status": self.qa_status,
+            "stage_statuses": dict(self.stage_statuses),
             "acceptance_status": self.acceptance_status,
             "human_decision": self.human_decision,
-            "qa_round": self.qa_round,
+            "verification_round": self.verification_round,
             "blocked_reason": self.blocked_reason,
             "artifact_paths": dict(self.artifact_paths),
         }

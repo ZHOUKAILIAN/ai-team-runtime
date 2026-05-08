@@ -12,7 +12,18 @@ type Props = {
   onOpenSession: (sessionId: string) => void;
 };
 
-const laneStages = ["Intake", "Product", "Dev", "QA", "Acceptance"];
+const laneStages = [
+  "Intake",
+  "Route",
+  "ProductDefinition",
+  "ProjectRuntime",
+  "TechnicalDesign",
+  "Implementation",
+  "Verification",
+  "GovernanceReview",
+  "Acceptance",
+  "SessionHandoff"
+];
 type SessionFilter = "all" | "waiting_human" | "blocked" | "in_progress";
 
 export function ProjectWorkbenchPage({ snapshot, projectId, language, searchQuery, onBack, onOpenSession }: Props) {
@@ -69,7 +80,7 @@ export function ProjectWorkbenchPage({ snapshot, projectId, language, searchQuer
               ))}
             </div>
           </div>
-          <div className="grid gap-3 overflow-x-auto p-4 lg:grid-cols-5">
+          <div className="grid min-w-[132rem] grid-cols-10 gap-3 overflow-x-auto p-4">
             {laneStages.map((stage) => (
               <StageLane
                 key={stage}
@@ -194,12 +205,13 @@ function SessionCard({ session, language, onOpen }: { session: SessionSummary; l
 }
 
 function normalizedStage(stage: string, state: string) {
-  if (state === "Done") return "Acceptance";
-  if (state === "WaitForHumanDecision") return "Acceptance";
-  if (state === "WaitForCEOApproval") return "Product";
-  if (["Intake", "Product", "Dev", "QA", "Acceptance"].includes(stage)) return stage;
-  if (["Intake", "ProductDraft"].includes(state)) return "Intake";
-  return "Dev";
+  if (state === "Done") return "SessionHandoff";
+  if (state === "WaitForHumanDecision") return "SessionHandoff";
+  if (state === "WaitForProductDefinitionApproval") return "ProductDefinition";
+  if (state === "WaitForTechnicalDesignApproval") return "TechnicalDesign";
+  if (laneStages.includes(stage)) return stage;
+  if (["Intake"].includes(state)) return "Intake";
+  return "Implementation";
 }
 
 function statusLabel(status: string, t: typeof messages.zh | typeof messages.en) {

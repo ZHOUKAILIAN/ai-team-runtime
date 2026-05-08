@@ -103,29 +103,43 @@ def _current_action(summary: WorkflowSummary) -> str:
     if summary.blocked_reason:
         return f"{summary.current_stage} is blocked and needs evidence or rework before progress can continue."
     return {
-        "Intake": "Intake captured the request. Product should draft the PRD and acceptance criteria next.",
-        "ProductDraft": "Product is drafting or has drafted the PRD for CEO approval.",
-        "WaitForCEOApproval": "Waiting for CEO approval before Dev starts implementation.",
-        "Dev": "Dev should implement the approved PRD and submit the implementation bundle.",
-        "QA": "QA should independently verify Dev output and submit evidence-backed findings.",
-        "Acceptance": "Acceptance should validate the product outcome against the PRD and evidence contract.",
-        "WaitForHumanDecision": "Waiting for the human Go/No-Go decision.",
+        "Intake": "Intake captured the request. Route should classify five-layer impact next.",
+        "Route": "Route should classify layer impact, red lines, and required downstream stages.",
+        "ProductDefinition": "ProductDefinition should produce the Layer 1 delta and stop for approval.",
+        "WaitForProductDefinitionApproval": "Waiting for human approval of the Layer 1 product-definition delta.",
+        "ProjectRuntime": "ProjectRuntime should record Layer 3 landing defaults for this project.",
+        "TechnicalDesign": "TechnicalDesign should produce the Layer 2 implementation design.",
+        "WaitForTechnicalDesignApproval": "Waiting for human approval of the technical design.",
+        "Implementation": "Implementation should execute the approved technical design.",
+        "Verification": "Verification should independently verify implementation evidence.",
+        "GovernanceReview": "GovernanceReview should check five-layer boundaries and closeout evidence.",
+        "Acceptance": "Acceptance should produce the final AI recommendation.",
+        "SessionHandoff": "SessionHandoff should preserve Layer 5 local continuity.",
+        "WaitForHumanDecision": "Waiting for the final human Go/No-Go decision.",
     }.get(summary.current_state, f"{summary.current_stage} is active.")
 
 
 def _next_action(summary: WorkflowSummary) -> str:
     if summary.blocked_reason:
         return f"Resolve blocker: {summary.blocked_reason}"
-    if summary.current_state in {"Intake", "ProductDraft"}:
-        return "Run Product with the current stage contract, then submit Product result."
-    if summary.current_state == "WaitForCEOApproval":
-        return "Review PRD, then record human decision: go, no-go, or rework."
-    if summary.current_state == "Dev":
-        return "Run Dev against the approved PRD and submit implementation evidence."
-    if summary.current_state == "QA":
-        return "Run QA independently and submit QA result with rerun evidence."
-    if summary.current_state == "Acceptance":
-        return "Run Acceptance and submit recommendation plus required review artifacts."
+    if summary.current_state == "Intake":
+        return "Run Route, then ProductDefinition, and stop at the L1 approval gate."
+    if summary.current_state == "WaitForProductDefinitionApproval":
+        return "Review product-definition-delta.md, then record human decision: go, no-go, or rework."
+    if summary.current_state == "WaitForTechnicalDesignApproval":
+        return "Review technical-design.md, then record human decision: go, no-go, or rework."
+    if summary.current_state in {
+        "Route",
+        "ProductDefinition",
+        "ProjectRuntime",
+        "TechnicalDesign",
+        "Implementation",
+        "Verification",
+        "GovernanceReview",
+        "Acceptance",
+        "SessionHandoff",
+    }:
+        return f"Run {summary.current_state} with the current stage contract."
     if summary.current_state == "WaitForHumanDecision":
         return "Record the final human Go/No-Go decision."
     return "Inspect the latest event and workflow summary before continuing."

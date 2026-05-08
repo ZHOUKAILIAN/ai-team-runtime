@@ -7,13 +7,13 @@ class ReviewTests(unittest.TestCase):
 
         review = build_session_review(
             stage_artifacts={
-                "Product": "scope: create, edit",
-                "QA": "scope missing: delete",
+                "ProductDefinition": "scope: create, edit",
+                "Verification": "scope missing: delete",
             },
             findings=[
                 {
-                    "source_stage": "QA",
-                    "target_stage": "Product",
+                    "source_stage": "Verification",
+                    "target_stage": "ProductDefinition",
                     "issue": "Delete flow missing",
                     "severity": "high",
                     "proposed_context_update": "Always expand user actions into CRUD coverage.",
@@ -22,7 +22,7 @@ class ReviewTests(unittest.TestCase):
         )
 
         self.assertIn("Delete flow missing", review)
-        self.assertIn("--- Product", review)
+        self.assertIn("--- ProductDefinition", review)
         self.assertIn("proposed_context_update", review)
 
     def test_review_includes_workflow_status_when_summary_provided(self) -> None:
@@ -31,34 +31,36 @@ class ReviewTests(unittest.TestCase):
 
         review = build_session_review(
             stage_artifacts={
-                "Product": "scope: create, edit",
-                "QA": "scope missing: delete",
+                "ProductDefinition": "scope: create, edit",
+                "Verification": "scope missing: delete",
             },
             findings=[],
             workflow_summary=WorkflowSummary(
                 session_id="s1",
                 runtime_mode="deterministic_demo",
                 current_state="In Progress",
-                current_stage="QA",
-                prd_status="completed",
-                dev_status="completed",
-                qa_status="in_progress",
+                current_stage="Verification",
+                stage_statuses={
+                    "ProductDefinition": "approved",
+                    "Implementation": "completed",
+                    "Verification": "in_progress",
+                },
                 acceptance_status="pending",
                 human_decision="pending",
-                qa_round=2,
+                verification_round=2,
             ),
         )
 
         self.assertIn("## Workflow Status", review)
         self.assertIn("runtime_mode: deterministic_demo", review)
         self.assertIn("current_state: In Progress", review)
-        self.assertIn("current_stage: QA", review)
-        self.assertIn("prd_status: completed", review)
-        self.assertIn("dev_status: completed", review)
-        self.assertIn("qa_status: in_progress", review)
+        self.assertIn("current_stage: Verification", review)
+        self.assertIn("- ProductDefinition: approved", review)
+        self.assertIn("- Implementation: completed", review)
+        self.assertIn("- Verification: in_progress", review)
         self.assertIn("acceptance_status: pending", review)
         self.assertIn("human_decision: pending", review)
-        self.assertIn("qa_round: 2", review)
+        self.assertIn("verification_round: 2", review)
 
 
 if __name__ == "__main__":
