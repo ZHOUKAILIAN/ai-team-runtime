@@ -90,7 +90,8 @@ class RuntimeDriverSchemaTests(unittest.TestCase):
 
         prompt = _build_codex_prompt(request)
 
-        self.assertIn("Write artifact_content primarily in Chinese", prompt)
+        self.assertIn("Write artifact_content in Simplified Chinese", prompt)
+        self.assertIn("Write every human-readable artifact", prompt)
         self.assertIn("Do not create or modify the required stage artifact file", prompt)
         self.assertIn("product-definition-delta.md", prompt)
         self.assertIn("Separate L1 candidates from non-L1 task content explicitly", prompt)
@@ -138,6 +139,7 @@ class RuntimeDriverSchemaTests(unittest.TestCase):
         prompt = _build_codex_prompt(request)
 
         self.assertIn("technical-design.md", prompt)
+        self.assertIn("Simplified Chinese", prompt)
         self.assertIn("Do not edit repository source code", prompt)
         self.assertIn("Prefer Mermaid flowcharts", prompt)
         self.assertIn("Markdown tables", prompt)
@@ -184,6 +186,7 @@ class RuntimeDriverSchemaTests(unittest.TestCase):
         prompt = _build_codex_prompt(request)
 
         self.assertIn("approved technical design", prompt)
+        self.assertIn("implementation.md in Simplified Chinese", prompt)
         self.assertIn("按已确认技术设计创建 hello.js", prompt)
 
     def test_codex_prompt_includes_enabled_skills(self) -> None:
@@ -456,6 +459,7 @@ class RuntimeDriverTraceTests(unittest.TestCase):
                 "stage_run_acquired",
                 "executor_started",
                 "executor_completed",
+                "worktree_changes_detected",
                 "result_submitted",
                 "gate_evaluated",
                 "state_advanced",
@@ -514,6 +518,79 @@ class RuntimeDriverTraceTests(unittest.TestCase):
 
         self.assertEqual(result.status, "BLOCKED")
         self.assertIn("state_advanced", result.reason)
+
+    def test_command_stage_records_worktree_changes(self) -> None:
+        from agent_team.runtime_driver import RuntimeDriverOptions, run_requirement
+        from agent_team.state import StateStore
+
+        with TemporaryDirectory(dir=local_temp_dir()) as temp_dir:
+            root = Path(temp_dir)
+            repo_root = root / "repo"
+            state_root = root / "state"
+            repo_root.mkdir()
+            subprocess.run(["git", "init"], cwd=repo_root, capture_output=True, text=True, check=True)
+            (repo_root / "existing.txt").write_text("clean baseline\n")
+            subprocess.run(["git", "add", "existing.txt"], cwd=repo_root, capture_output=True, text=True, check=True)
+            subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "user.name=Agent Team Test",
+                    "-c",
+                    "user.email=agent-team@example.invalid",
+                    "commit",
+                    "-m",
+                    "init",
+                ],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            (repo_root / "existing.txt").write_text("dirty before stage\n")
+            worker_path = root / "stage_worker.py"
+            worker_path.write_text(
+                "import json, os\n"
+                "from pathlib import Path\n"
+                "stage = os.environ['AGENT_TEAM_STAGE']\n"
+                "repo = Path(os.environ['AGENT_TEAM_REPO_ROOT'])\n"
+                "if stage == 'ProductDefinition':\n"
+                "    (repo / 'existing.txt').write_text('dirty after stage\\n')\n"
+                "    (repo / 'created.txt').write_text('created by stage\\n')\n"
+                "payloads = {\n"
+                "  'Route': {'status': 'completed', 'artifact_content': '{\"affected_layers\":[\"L1\"]}', 'journal': '', 'evidence': [{'name': 'route_classification', 'kind': 'artifact', 'summary': 'routed'}], 'summary': 'route'},\n"
+                "  'ProductDefinition': {'status': 'completed', 'artifact_content': '# Product Definition Delta\\n', 'journal': '', 'evidence': [{'name': 'l1_classification', 'kind': 'artifact', 'summary': 'l1'}], 'summary': 'l1'},\n"
+                "}\n"
+                "payload = payloads[stage]\n"
+                "payload.setdefault('findings', [])\n"
+                "payload.setdefault('suggested_next_owner', '')\n"
+                "payload.setdefault('acceptance_status', '')\n"
+                "payload.setdefault('blocked_reason', '')\n"
+                "Path(os.environ['AGENT_TEAM_RESULT_BUNDLE']).write_text(json.dumps(payload))\n"
+            )
+
+            result = run_requirement(
+                repo_root=repo_root,
+                state_root=state_root,
+                message="执行这个需求：验证工作树改动记录",
+                options=RuntimeDriverOptions(
+                    executor="command",
+                    executor_command=f"{sys.executable} {worker_path}",
+                ),
+            )
+            run = StateStore(state_root).latest_stage_run(result.session_id, stage="ProductDefinition")
+
+        self.assertIsNotNone(run)
+        steps = run.steps if run is not None else []
+        details = next(step["details"] for step in steps if step["step"] == "worktree_changes_detected")
+        self.assertTrue(details["available"])
+        self.assertEqual(details["before_dirty_count"], 1)
+        self.assertEqual(details["after_dirty_count"], 2)
+        self.assertEqual(set(details["changed_file_paths"]), {"created.txt", "existing.txt"})
+        by_path = {item["path"]: item for item in details["changed_files"]}
+        self.assertEqual(by_path["created.txt"]["change_type"], "new_dirty_file")
+        self.assertEqual(by_path["existing.txt"]["change_type"], "content_changed")
+        self.assertTrue(by_path["existing.txt"]["preexisting_dirty"])
 
 
 class RuntimeDriverInteractiveFlowTests(unittest.TestCase):

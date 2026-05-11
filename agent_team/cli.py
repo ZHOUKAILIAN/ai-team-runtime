@@ -68,6 +68,7 @@ RUN_REQUIREMENT_TRACE_STEP_LABELS = {
     "stage_run_acquired": "准备执行环境",
     "executor_started": "执行阶段任务",
     "executor_completed": "读取执行结果",
+    "worktree_changes_detected": "记录工作树改动",
     "result_submitted": "提交阶段产物",
     "gate_evaluated": "执行质量门禁",
     "state_advanced": "更新流程状态",
@@ -492,6 +493,14 @@ def _handle_run_requirement(args: argparse.Namespace) -> int:
         raise SystemExit(str(exc))
 
     _print_runtime_driver_result(result)
+    if args.model_output != "off":
+        store = StateStore(args.state_root)
+        summary = store.load_workflow_summary(result.session_id)
+        _print_run_requirement_worktree_changes(
+            store=store,
+            session_id=result.session_id,
+            stage=_run_requirement_stage_for_summary(summary),
+        )
     return 1 if result.status in {"blocked", "failed"} else 0
 
 
@@ -846,6 +855,8 @@ def _print_run_requirement_stage_report(
             print(f"- {line}")
     print("文档:")
     print(f"- {label}: {doc_path}")
+    if model_output != "off":
+        _print_run_requirement_worktree_changes(store=store, session_id=session_id, stage=stage)
     if model_output == "raw":
         print("调试信息:")
         _print_runtime_driver_result(result)
@@ -862,6 +873,70 @@ def _print_run_requirement_stage_report(
     else:
         print(_run_requirement_next_step_text(stage))
     print("")
+
+
+def _print_run_requirement_worktree_changes(*, store: StateStore, session_id: str, stage: str) -> None:
+    details = _latest_worktree_change_details(store=store, session_id=session_id, stage=stage)
+    print("本阶段改动:")
+    if not details:
+        print("- 暂无工作树改动记录。")
+        return
+    if not details.get("available"):
+        reason = str(details.get("reason") or "当前目录不是 Git 工作树，或 git status 执行失败。")
+        print(f"- 未获取到 Git 工作树快照：{reason}")
+        return
+
+    changed_files = details.get("changed_files", [])
+    if not isinstance(changed_files, list) or not changed_files:
+        before_count = int(details.get("before_dirty_count", 0) or 0)
+        after_count = int(details.get("after_dirty_count", 0) or 0)
+        print(f"- 未检测到新的工作树改动（执行前 dirty: {before_count}，执行后 dirty: {after_count}）。")
+        return
+
+    for item in changed_files[:20]:
+        if not isinstance(item, dict):
+            continue
+        status_line = str(item.get("status_line") or item.get("path") or "")
+        note = _worktree_change_note(item)
+        print(f"- {status_line}{note}")
+    if len(changed_files) > 20:
+        print(f"- 还有 {len(changed_files) - 20} 个文件未展开。")
+
+    diff_stat = str(details.get("diff_stat") or "").strip()
+    if diff_stat:
+        print("改动规模:")
+        for line in diff_stat.splitlines()[:30]:
+            print(f"  {line}")
+        if len(diff_stat.splitlines()) > 30:
+            print("  ...<truncated>")
+
+
+def _latest_worktree_change_details(*, store: StateStore, session_id: str, stage: str) -> dict[str, object]:
+    run = store.latest_stage_run(session_id, stage=_runtime_stage_for_run_requirement_stage(stage))
+    if run is None:
+        return {}
+    for step in reversed(run.steps):
+        if step.get("step") != "worktree_changes_detected":
+            continue
+        details = step.get("details", {})
+        return dict(details) if isinstance(details, dict) else {}
+    return {}
+
+
+def _worktree_change_note(item: dict[str, object]) -> str:
+    change_type = str(item.get("change_type") or "")
+    preexisting_dirty = bool(item.get("preexisting_dirty"))
+    if change_type == "new_dirty_file":
+        return "（新增 dirty 文件）"
+    if change_type == "became_clean":
+        return "（执行后恢复为 clean）"
+    if preexisting_dirty and change_type == "content_changed":
+        return "（执行前已 dirty，本阶段又改动）"
+    if preexisting_dirty and change_type == "status_changed":
+        return "（执行前已 dirty，状态发生变化）"
+    if change_type == "status_changed":
+        return "（状态发生变化）"
+    return ""
 
 
 def _run_requirement_stage_summary_lines(

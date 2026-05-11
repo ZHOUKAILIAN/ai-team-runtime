@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import subprocess
+from hashlib import sha256
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -31,6 +32,7 @@ REQUIRED_PASS_TRACE_STEPS = [
     "stage_run_acquired",
     "executor_started",
     "executor_completed",
+    "worktree_changes_detected",
     "result_submitted",
     "gate_evaluated",
     "state_advanced",
@@ -490,6 +492,199 @@ def _apply_human_decision(*, store: StateStore, summary: WorkflowSummary, decisi
     )
 
 
+def _capture_worktree_snapshot(repo_root: Path, *, excluded_roots: list[Path] | None = None) -> dict[str, Any]:
+    probe = _run_git(repo_root, ["rev-parse", "--is-inside-work-tree"])
+    if probe.returncode != 0 or probe.stdout.strip() != "true":
+        reason = (probe.stderr or probe.stdout or "not a git worktree").strip()
+        return {"available": False, "reason": reason}
+
+    status = _run_git(repo_root, ["status", "--short", "--untracked-files=all"])
+    if status.returncode != 0:
+        reason = (status.stderr or status.stdout or "git status failed").strip()
+        return {"available": False, "reason": reason}
+
+    excluded_paths = _repo_relative_excluded_paths(repo_root, excluded_roots or [])
+    entries: dict[str, dict[str, str]] = {}
+    status_lines: list[str] = []
+    for raw_line in status.stdout.splitlines():
+        line = raw_line.rstrip()
+        if not line.strip():
+            continue
+        path = _path_from_git_status_line(line)
+        if not path or _is_excluded_repo_path(path, excluded_paths):
+            continue
+        status_code = line[:2] if len(line) >= 2 else line.strip()
+        entry = {
+            "path": path,
+            "status": status_code,
+            "status_line": line,
+            "fingerprint": _worktree_file_fingerprint(repo_root / path),
+        }
+        entries[path] = entry
+        status_lines.append(line)
+
+    return {
+        "available": True,
+        "dirty_count": len(entries),
+        "status_lines": status_lines,
+        "entries": entries,
+    }
+
+
+def _summarize_worktree_changes(
+    *,
+    repo_root: Path,
+    before: dict[str, Any],
+    after: dict[str, Any],
+) -> dict[str, Any]:
+    if not before.get("available") or not after.get("available"):
+        reasons = []
+        if not before.get("available"):
+            reasons.append(f"before: {before.get('reason', 'unavailable')}")
+        if not after.get("available"):
+            reasons.append(f"after: {after.get('reason', 'unavailable')}")
+        return {
+            "available": False,
+            "reason": "; ".join(reasons),
+            "before_dirty_count": before.get("dirty_count", 0),
+            "after_dirty_count": after.get("dirty_count", 0),
+            "changed_files": [],
+            "changed_file_paths": [],
+            "status_lines": [],
+            "diff_stat": "",
+        }
+
+    before_entries = before.get("entries", {}) if isinstance(before.get("entries"), dict) else {}
+    after_entries = after.get("entries", {}) if isinstance(after.get("entries"), dict) else {}
+    changed_files: list[dict[str, Any]] = []
+    for path in sorted(set(before_entries) | set(after_entries)):
+        before_entry = before_entries.get(path)
+        after_entry = after_entries.get(path)
+        if _worktree_entry_signature(before_entry) == _worktree_entry_signature(after_entry):
+            continue
+        change_type = _worktree_change_type(before_entry, after_entry)
+        changed_files.append(
+            {
+                "path": path,
+                "status": str(after_entry.get("status", "clean")) if isinstance(after_entry, dict) else "clean",
+                "status_line": (
+                    str(after_entry.get("status_line", f"clean {path}"))
+                    if isinstance(after_entry, dict)
+                    else f"clean {path}"
+                ),
+                "preexisting_dirty": before_entry is not None,
+                "change_type": change_type,
+            }
+        )
+
+    diff_paths = [
+        item["path"]
+        for item in changed_files
+        if item.get("status") != "clean" and not str(item.get("status", "")).startswith("??")
+    ]
+    return {
+        "available": True,
+        "before_dirty_count": before.get("dirty_count", 0),
+        "after_dirty_count": after.get("dirty_count", 0),
+        "changed_files": changed_files,
+        "changed_file_paths": [str(item["path"]) for item in changed_files],
+        "status_lines": [str(item["status_line"]) for item in changed_files],
+        "diff_stat": _worktree_diff_stat(repo_root, diff_paths),
+    }
+
+
+def _run_git(repo_root: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(
+            ["git", "-c", "core.quotepath=false", *args],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return subprocess.CompletedProcess(["git", *args], 1, stdout="", stderr=str(exc))
+
+
+def _repo_relative_excluded_paths(repo_root: Path, excluded_roots: list[Path]) -> set[str]:
+    repo = repo_root.resolve()
+    paths: set[str] = set()
+    for root in excluded_roots:
+        try:
+            relative = root.resolve().relative_to(repo)
+        except ValueError:
+            continue
+        value = relative.as_posix().rstrip("/")
+        if value and value != ".":
+            paths.add(value)
+    return paths
+
+
+def _is_excluded_repo_path(path: str, excluded_paths: set[str]) -> bool:
+    normalized = path.rstrip("/")
+    return any(normalized == excluded or normalized.startswith(f"{excluded}/") for excluded in excluded_paths)
+
+
+def _path_from_git_status_line(line: str) -> str:
+    path = line[3:] if len(line) >= 3 else line.strip()
+    if " -> " in path:
+        path = path.rsplit(" -> ", 1)[-1]
+    if len(path) >= 2 and path[0] == path[-1] == '"':
+        path = path[1:-1]
+    return path.strip()
+
+
+def _worktree_file_fingerprint(path: Path) -> str:
+    try:
+        stat = path.lstat()
+    except FileNotFoundError:
+        return "missing"
+    if path.is_symlink():
+        return f"symlink:{os.readlink(path)}"
+    if not path.is_file():
+        return f"special:{stat.st_mode}:{stat.st_size}:{stat.st_mtime_ns}"
+    if stat.st_size > 10 * 1024 * 1024:
+        return f"large-file:{stat.st_size}:{stat.st_mtime_ns}"
+    digest = sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _worktree_entry_signature(entry: object) -> tuple[str, str] | None:
+    if not isinstance(entry, dict):
+        return None
+    return (str(entry.get("status", "")), str(entry.get("fingerprint", "")))
+
+
+def _worktree_change_type(before_entry: object, after_entry: object) -> str:
+    if before_entry is None and after_entry is not None:
+        return "new_dirty_file"
+    if before_entry is not None and after_entry is None:
+        return "became_clean"
+    before_status = str(before_entry.get("status", "")) if isinstance(before_entry, dict) else ""
+    after_status = str(after_entry.get("status", "")) if isinstance(after_entry, dict) else ""
+    if before_status != after_status:
+        return "status_changed"
+    return "content_changed"
+
+
+def _worktree_diff_stat(repo_root: Path, paths: list[str]) -> str:
+    if not paths:
+        return ""
+    unique_paths = sorted(set(paths))
+    unstaged = _run_git(repo_root, ["diff", "--stat", "--", *unique_paths])
+    staged = _run_git(repo_root, ["diff", "--cached", "--stat", "--", *unique_paths])
+    parts: list[str] = []
+    if unstaged.returncode == 0 and unstaged.stdout.strip():
+        parts.append("未暂存改动:\n" + unstaged.stdout.strip())
+    if staged.returncode == 0 and staged.stdout.strip():
+        parts.append("已暂存改动:\n" + staged.stdout.strip())
+    return "\n".join(parts)
+
+
 def _execute_stage(
     *,
     repo_root: Path,
@@ -612,6 +807,10 @@ def _execute_stage(
             "skill_count": len(stage_skills),
         },
     )
+    worktree_snapshot_before = _capture_worktree_snapshot(
+        repo_root,
+        excluded_roots=[store.root / "_runtime"],
+    )
     _add_runtime_trace_step(
         trace_steps,
         step="executor_started",
@@ -625,11 +824,35 @@ def _execute_stage(
         trace_steps=trace_steps,
     )
     result = executor.execute(request)
+    worktree_snapshot_after = _capture_worktree_snapshot(
+        repo_root,
+        excluded_roots=[store.root / "_runtime"],
+    )
+    worktree_changes = _summarize_worktree_changes(
+        repo_root=repo_root,
+        before=worktree_snapshot_before,
+        after=worktree_snapshot_after,
+    )
     _add_runtime_trace_step(
         trace_steps,
         step="executor_completed",
         status="ok" if result.status != "blocked" else "blocked",
         details={"executor": executor.name, "result_status": result.status},
+    )
+    _add_runtime_trace_step(
+        trace_steps,
+        step="worktree_changes_detected",
+        details=worktree_changes,
+    )
+    store.record_event(
+        session_id,
+        kind="runtime_driver_worktree_changes_detected",
+        stage=stage,
+        state=stage,
+        actor="runtime-driver",
+        status="ok",
+        message=f"Runtime driver detected {len(worktree_changes.get('changed_files', []))} worktree change(s).",
+        details=worktree_changes,
     )
     _write_runtime_trace(
         store=store,
@@ -1227,6 +1450,9 @@ def _build_codex_prompt(request: StageExecutionRequest) -> str:
         "<output_rules>\n"
         "Return only a JSON object matching the provided output schema. Return only the stage payload; "
         "the runtime driver will inject session_id, stage, contract_id, and artifact_name after you return.\n\n"
+        "Write every human-readable artifact, report, summary, risk, finding, and handoff note in Simplified Chinese "
+        "unless the user explicitly asks for another language. Keep schema field names, file paths, commands, "
+        "code identifiers, API names, and quoted source text unchanged when they must remain exact.\n\n"
         "Do not include workflow identity or control fields such as session_id, stage, contract_id, "
         "artifact_name, current_state, or current_stage. Use status `completed` for a completed stage, "
         "`failed` when the current stage finds defects, or `blocked` when evidence cannot be produced. Every name listed "
@@ -1254,13 +1480,13 @@ def _stage_artifact_format_instructions(stage: str, *, required_outputs: list[st
     required_outputs = required_outputs or []
     if stage == "Route":
         return (
-            "- Write artifact_content as valid JSON for route-packet.json.\n"
+            "- Write artifact_content as valid JSON for route-packet.json; JSON keys stay as required, but all human-readable string values must be Simplified Chinese.\n"
             "- Include affected_layers, required_stages, baseline_sources, red_lines, and unresolved_questions.\n"
             "- Do not implement code or rewrite product definition in Route."
         )
     if stage == "ProductDefinition":
         return (
-            "- Write artifact_content primarily in Chinese unless the user explicitly asks for another language.\n"
+            "- Write artifact_content in Simplified Chinese unless the user explicitly asks for another language.\n"
             "- artifact_content is product-definition-delta.md, not canonical product definition.\n"
             "- Separate L1 candidates from non-L1 task content explicitly.\n"
             "- ProductDefinition may propose stable product semantics, core objects, core operating model, "
@@ -1270,14 +1496,14 @@ def _stage_artifact_format_instructions(stage: str, *, required_outputs: list[st
         )
     if stage == "ProjectRuntime":
         return (
-            "- Write artifact_content as project-landing-delta.md.\n"
+            "- Write artifact_content as project-landing-delta.md in Simplified Chinese.\n"
             "- Capture only L3 project landing defaults: entrypoints, run commands, directories, packaging, "
             "configuration, deployment shape, and project-specific runtime conventions.\n"
             "- Do not redefine product semantics and do not create shared governance rules here."
         )
     if stage == "TechnicalDesign":
         return (
-            "- Write artifact_content as technical-design.md, primarily in Chinese unless the user asks otherwise.\n"
+            "- Write artifact_content as technical-design.md in Simplified Chinese unless the user asks otherwise.\n"
             "- Do not edit repository source code in this pass.\n"
             "- Prefer Mermaid flowcharts for execution flow and Markdown tables for scope, file changes, "
             "interfaces, verification, risks, and rollback plans.\n"
@@ -1288,19 +1514,21 @@ def _stage_artifact_format_instructions(stage: str, *, required_outputs: list[st
         )
     if stage == "Implementation":
         return (
+            "- Write artifact_content as implementation.md in Simplified Chinese.\n"
             "- Treat StageExecutionContext.approved_technical_design_content as the approved technical design.\n"
             "- Implement the technical design instead of replacing it with a new design.\n"
-            "- If approved_technical_design_content is empty, fall back to ProductDefinition, ProjectRuntime, and stage contract."
+            "- If approved_technical_design_content is empty, fall back to ProductDefinition, ProjectRuntime, and stage contract.\n"
+            "- The implementation report must name changed files, actual behavior changes, self-review results, commands run, skipped checks, and unresolved risks in Chinese."
         )
     if stage == "Verification":
-        return "- Independently verify Implementation evidence against L1, L2, L3, and the technical design."
+        return "- Write artifact_content as verification-report.md in Simplified Chinese. Independently verify Implementation evidence against L1, L2, L3, and the technical design."
     if stage == "GovernanceReview":
-        return "- Check five-layer boundary violations, evidence quality, writeback obligations, and merge readiness."
+        return "- Write artifact_content as governance-review.md in Simplified Chinese. Check five-layer boundary violations, evidence quality, writeback obligations, and merge readiness."
     if stage == "Acceptance":
-        return "- Recommend final Go/No-Go from product result and governance evidence; do not claim human approval."
+        return "- Write artifact_content as acceptance-report.md in Simplified Chinese. Recommend final Go/No-Go from product result and governance evidence; do not claim human approval."
     if stage == "SessionHandoff":
-        return "- Preserve L5 local-control handoff, unresolved decisions, next actions, and non-promoted local material."
-    return "- Write artifact_content in the most useful language for the current request and keep it concise."
+        return "- Write artifact_content as session-handoff.md in Simplified Chinese. Preserve L5 local-control handoff, unresolved decisions, next actions, and non-promoted local material."
+    return "- Write artifact_content in Simplified Chinese unless the user explicitly asks for another language, and keep it concise."
 
 
 def _xml_cdata(value: str) -> str:

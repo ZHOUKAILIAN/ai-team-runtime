@@ -686,6 +686,80 @@ class CliTests(unittest.TestCase):
                 ).read_text(),
             )
 
+    def test_run_requirement_stage_report_prints_worktree_changes(self) -> None:
+        with TemporaryDirectory(dir=local_temp_dir()) as temp_dir:
+            root = Path(temp_dir)
+            repo_root = root / "repo"
+            repo_root.mkdir()
+            subprocess.run(["git", "init"], cwd=repo_root, capture_output=True, text=True, check=True)
+            (repo_root / "existing.txt").write_text("clean baseline\n")
+            subprocess.run(["git", "add", "existing.txt"], cwd=repo_root, capture_output=True, text=True, check=True)
+            subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "user.name=Agent Team Test",
+                    "-c",
+                    "user.email=agent-team@example.invalid",
+                    "commit",
+                    "-m",
+                    "init",
+                ],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            (repo_root / "existing.txt").write_text("dirty before stage\n")
+            worker_path = root / "stage_worker.py"
+            worker_path.write_text(
+                "import json, os\n"
+                "from pathlib import Path\n"
+                "stage = os.environ['AGENT_TEAM_STAGE']\n"
+                "repo = Path(os.environ['AGENT_TEAM_REPO_ROOT'])\n"
+                "if stage == 'ProductDefinition':\n"
+                "    (repo / 'existing.txt').write_text('dirty after stage\\n')\n"
+                "    (repo / 'created.txt').write_text('created by stage\\n')\n"
+                "payloads = {\n"
+                "  'Route': {'status': 'completed', 'artifact_content': '{\"affected_layers\":[\"L1\"]}', 'journal': '', 'evidence': [{'name': 'route_classification', 'kind': 'artifact', 'summary': 'routed'}], 'summary': 'route'},\n"
+                "  'ProductDefinition': {'status': 'completed', 'artifact_content': '# Product Definition Delta\\n', 'journal': '', 'evidence': [{'name': 'l1_classification', 'kind': 'artifact', 'summary': 'l1'}], 'summary': 'l1'},\n"
+                "}\n"
+                "payload = payloads[stage]\n"
+                "payload.setdefault('findings', [])\n"
+                "payload.setdefault('suggested_next_owner', '')\n"
+                "payload.setdefault('acceptance_status', '')\n"
+                "payload.setdefault('blocked_reason', '')\n"
+                "Path(os.environ['AGENT_TEAM_RESULT_BUNDLE']).write_text(json.dumps(payload))\n"
+            )
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "agent_team",
+                    "--repo-root",
+                    str(repo_root),
+                    "--state-root",
+                    str(root / "state"),
+                    "run",
+                    "--message",
+                    "执行这个需求：验证 CLI 展示工作树改动",
+                    "--executor",
+                    "command",
+                    "--executor-command",
+                    f"{sys.executable} {worker_path}",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("本阶段改动:", result.stdout)
+        self.assertIn("created.txt", result.stdout)
+        self.assertIn("existing.txt", result.stdout)
+        self.assertIn("执行前已 dirty", result.stdout)
+
     def test_panel_json_prints_snapshot(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
 
