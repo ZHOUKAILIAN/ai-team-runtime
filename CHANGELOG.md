@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.2.0b10] - 2026-05-11
+
+- Added `agent-team update` for safe project-level Agent Team configuration upgrades.
+- Added dry-run previews, missing role template backfill, doc-map modernization, and opt-in deprecated role cleanup for existing projects.
+
 ## [0.2.0b9] - 2026-05-11
 
 - Added runtime worktree change detection for each stage so CLI output can show which files a stage changed.

@@ -70,6 +70,91 @@ class ProjectStructureTests(unittest.TestCase):
             self.assertNotIn("requirements", doc_map)
             self.assertNotIn("designs", doc_map)
 
+    def test_update_project_structure_requires_existing_project(self) -> None:
+        from agent_team.project_structure import update_project_structure
+
+        with TemporaryDirectory(dir=local_temp_dir()) as temp_dir:
+            with self.assertRaises(FileNotFoundError):
+                update_project_structure(Path(temp_dir))
+
+    def test_update_project_structure_dry_run_reports_without_writing(self) -> None:
+        from agent_team.project_structure import update_project_structure
+
+        with TemporaryDirectory(dir=local_temp_dir()) as temp_dir:
+            repo_root = Path(temp_dir)
+            project_dir = repo_root / "agent-team" / "project"
+            roles_dir = project_dir / "roles"
+            roles_dir.mkdir(parents=True)
+            (project_dir / "context.md").write_text("# Custom Context\n")
+            (project_dir / "rules.md").write_text("# Custom Rules\n")
+            (project_dir / "doc-map.json").write_text(json.dumps({"requirements": "docs/requirements"}))
+            (roles_dir / "dev.context.md").write_text("# Legacy Dev\n")
+
+            report = update_project_structure(repo_root, dry_run=True)
+
+            actions = {action.action for action in report.actions}
+            self.assertIn("would_update", actions)
+            self.assertIn("would_create", actions)
+            self.assertIn("deprecated", actions)
+            doc_map = json.loads((project_dir / "doc-map.json").read_text())
+            self.assertIn("requirements", doc_map)
+            self.assertFalse((roles_dir / "route.context.md").exists())
+            self.assertTrue((roles_dir / "dev.context.md").exists())
+
+    def test_update_project_structure_preserves_existing_files_and_fills_missing_templates(self) -> None:
+        from agent_team.project_structure import update_project_structure
+
+        with TemporaryDirectory(dir=local_temp_dir()) as temp_dir:
+            repo_root = Path(temp_dir)
+            project_dir = repo_root / "agent-team" / "project"
+            roles_dir = project_dir / "roles"
+            roles_dir.mkdir(parents=True)
+            (project_dir / "context.md").write_text("# Custom Context\n")
+            (project_dir / "rules.md").write_text("# Custom Rules\n")
+            (project_dir / "doc-map.json").write_text(
+                json.dumps(
+                    {
+                        "product_definition": "docs/requirements",
+                        "technical_design": "docs/design",
+                    }
+                )
+            )
+            (roles_dir / "implementation.context.md").write_text("# Custom Implementation\n")
+
+            report = update_project_structure(repo_root)
+
+            self.assertIn("created", {action.action for action in report.actions})
+            self.assertEqual((project_dir / "context.md").read_text(), "# Custom Context\n")
+            self.assertEqual((project_dir / "rules.md").read_text(), "# Custom Rules\n")
+            self.assertEqual((roles_dir / "implementation.context.md").read_text(), "# Custom Implementation\n")
+            self.assertTrue((roles_dir / "implementation.contract.md").exists())
+            self.assertTrue((roles_dir / "verification.context.md").exists())
+            doc_map = json.loads((project_dir / "doc-map.json").read_text())
+            self.assertEqual(doc_map["product_definition"], "docs/requirements")
+            self.assertEqual(doc_map["technical_design"], "docs/design")
+            self.assertEqual(doc_map["project_runtime"], "docs/project-runtime")
+
+    def test_update_project_structure_deletes_deprecated_roles_only_when_requested(self) -> None:
+        from agent_team.project_structure import update_project_structure
+
+        with TemporaryDirectory(dir=local_temp_dir()) as temp_dir:
+            repo_root = Path(temp_dir)
+            project_dir = repo_root / "agent-team" / "project"
+            roles_dir = project_dir / "roles"
+            roles_dir.mkdir(parents=True)
+            (project_dir / "doc-map.json").write_text(json.dumps({"product_definition": "docs/product"}))
+            (roles_dir / "dev.context.md").write_text("# Legacy Dev\n")
+
+            report = update_project_structure(repo_root)
+
+            self.assertTrue((roles_dir / "dev.context.md").exists())
+            self.assertIn("deprecated", {action.action for action in report.actions})
+
+            cleanup_report = update_project_structure(repo_root, cleanup_deprecated=True)
+
+            self.assertFalse((roles_dir / "dev.context.md").exists())
+            self.assertIn("deleted", {action.action for action in cleanup_report.actions})
+
     def test_ensure_project_structure_removes_deprecated_project_roles(self) -> None:
         from agent_team.project_structure import ensure_project_structure
 

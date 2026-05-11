@@ -36,6 +36,7 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0)
         self.assertIn("init", result.stdout)
+        self.assertIn("update", result.stdout)
         self.assertIn("run", result.stdout)
         self.assertIn("panel", result.stdout)
         self.assertIn("status", result.stdout)
@@ -79,6 +80,72 @@ class CliTests(unittest.TestCase):
             self.assertTrue((repo_root / "agent-team" / "project" / "doc-map.json").is_file())
             self.assertTrue((repo_root / "agent-team" / "project" / "five-layer" / "classification-prompt.md").is_file())
             self.assertTrue((repo_root / "agent-team" / "project" / "five-layer" / "classification-run.json").is_file())
+
+    def test_update_reports_and_preserves_existing_project_files(self) -> None:
+        with TemporaryDirectory(dir=local_temp_dir()) as temp_dir:
+            repo_root = Path(temp_dir) / "repo"
+            project_dir = repo_root / "agent-team" / "project"
+            roles_dir = project_dir / "roles"
+            roles_dir.mkdir(parents=True, exist_ok=True)
+            (project_dir / "context.md").write_text("# Custom Context\n")
+            (project_dir / "rules.md").write_text("# Custom Rules\n")
+            (project_dir / "doc-map.json").write_text(json.dumps({"product_definition": "docs/requirements"}))
+            (roles_dir / "dev.context.md").write_text("# Legacy Dev\n")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "agent_team",
+                    "--repo-root",
+                    str(repo_root),
+                    "update",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("Agent Team 项目配置更新", result.stdout)
+            self.assertIn("dry_run: false", result.stdout)
+            self.assertIn("已创建", result.stdout)
+            self.assertIn("已保留", result.stdout)
+            self.assertEqual((project_dir / "context.md").read_text(), "# Custom Context\n")
+            self.assertEqual((project_dir / "rules.md").read_text(), "# Custom Rules\n")
+            self.assertTrue((roles_dir / "dev.context.md").exists())
+            doc_map = json.loads((project_dir / "doc-map.json").read_text())
+            self.assertEqual(doc_map["product_definition"], "docs/requirements")
+            self.assertEqual(doc_map["project_runtime"], "docs/project-runtime")
+
+    def test_update_dry_run_does_not_write_files(self) -> None:
+        with TemporaryDirectory(dir=local_temp_dir()) as temp_dir:
+            repo_root = Path(temp_dir) / "repo"
+            project_dir = repo_root / "agent-team" / "project"
+            project_dir.mkdir(parents=True)
+            (project_dir / "doc-map.json").write_text(json.dumps({"requirements": "docs/requirements"}))
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "agent_team",
+                    "--repo-root",
+                    str(repo_root),
+                    "update",
+                    "--dry-run",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("dry_run: true", result.stdout)
+            self.assertIn("预览更新", result.stdout)
+            self.assertEqual((project_dir / "doc-map.json").read_text(), json.dumps({"requirements": "docs/requirements"}))
+            self.assertFalse((project_dir / "context.md").exists())
+            self.assertFalse((repo_root / ".agent-team").exists())
 
     def test_run_help_lists_skill_overrides(self) -> None:
         result = subprocess.run(

@@ -14,7 +14,7 @@ from .gatekeeper import evaluate_candidate
 from .harness_paths import default_state_root
 from .models import Finding, GateResult, StageResultEnvelope, WorkflowSummary
 from .panel import build_panel_snapshot
-from .project_structure import ensure_project_structure
+from .project_structure import ProjectUpdateReport, ensure_project_structure, update_project_structure
 from .skill_registry import STAGES, SOURCE_LABELS, SkillRegistry
 from .stage_contracts import build_stage_contract
 from .stage_machine import StageMachine
@@ -181,6 +181,27 @@ def build_parser() -> argparse.ArgumentParser:
         help="Remote source URL for the five-layer-classifier skill used during init.",
     )
     init_parser.set_defaults(handler=_handle_init)
+
+    update_parser = subparsers.add_parser(
+        "update",
+        help="Update an existing project-level Agent Team configuration without overwriting user-owned files.",
+        description=(
+            "Update an existing project-level Agent Team configuration by modernizing doc-map.json, "
+            "creating missing project context files, and filling missing stage role templates without "
+            "overwriting existing project-owned files."
+        ),
+    )
+    update_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview changes without writing files.",
+    )
+    update_parser.add_argument(
+        "--cleanup-deprecated",
+        action="store_true",
+        help="Remove deprecated legacy role files after reporting them.",
+    )
+    update_parser.set_defaults(handler=_handle_update)
 
     run_requirement_parser = subparsers.add_parser(
         "run",
@@ -471,6 +492,55 @@ def _handle_init(args: argparse.Namespace) -> int:
     print(f"five_layer_classification_report: {five_layer.report_path}")
     print(f"five_layer_classification_metadata: {five_layer.metadata_path}")
     return 0
+
+
+def _handle_update(args: argparse.Namespace) -> int:
+    try:
+        report = update_project_structure(
+            args.repo_root,
+            dry_run=args.dry_run,
+            cleanup_deprecated=args.cleanup_deprecated,
+        )
+    except FileNotFoundError as exc:
+        raise SystemExit(str(exc))
+
+    _print_project_update_report(report)
+    return 0
+
+
+def _print_project_update_report(report: ProjectUpdateReport) -> None:
+    print("Agent Team 项目配置更新")
+    print(f"repo_root: {report.structure.repo_root}")
+    print(f"project_root: {report.structure.project_root}")
+    print(f"doc_map_path: {report.structure.doc_map_path}")
+    print(f"dry_run: {str(report.dry_run).lower()}")
+    print(f"cleanup_deprecated: {str(report.cleanup_deprecated).lower()}")
+    print(f"doc_map: {json.dumps(report.structure.doc_map, ensure_ascii=False, sort_keys=True)}")
+
+    counts: dict[str, int] = {}
+    for action in report.actions:
+        counts[action.action] = counts.get(action.action, 0) + 1
+    print(f"summary: {json.dumps(counts, ensure_ascii=False, sort_keys=True)}")
+    print("变更明细:")
+    if not report.actions:
+        print("- 无需更新。")
+        return
+    for action in report.actions:
+        print(f"- {_project_update_action_label(action.action)}: {action.path} - {action.message}")
+
+
+def _project_update_action_label(action: str) -> str:
+    labels = {
+        "created": "已创建",
+        "updated": "已更新",
+        "deleted": "已删除",
+        "skipped": "已保留",
+        "deprecated": "发现废弃文件",
+        "would_create": "预览创建",
+        "would_update": "预览更新",
+        "would_delete": "预览删除",
+    }
+    return labels.get(action, action)
 
 
 def _handle_run_requirement(args: argparse.Namespace) -> int:
@@ -1956,4 +2026,4 @@ def _expected_submission_stage(summary: WorkflowSummary) -> str | None:
 
 
 def _should_refresh_workspace_metadata(command: str) -> bool:
-    return True
+    return command != "update"
