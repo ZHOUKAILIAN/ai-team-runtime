@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [0.2.0b10] - 2026-05-11
+
+- Added `agent-team update` for safe project-level Agent Team configuration upgrades.
+- Added dry-run previews, missing role template backfill, doc-map modernization, and opt-in deprecated role cleanup for existing projects.
+
+## [0.2.0b9] - 2026-05-11
+
+- Added runtime worktree change detection for each stage so CLI output can show which files a stage changed.
+- Enforced Simplified Chinese for human-readable stage artifacts, reports, summaries, findings, and handoff notes.
+
+## [0.2.0b8] - 2026-05-09
+
 - Simplified CLI from 21 commands to 9: removed `start-session`, `resume`, `current-stage`, `step`, `build-stage-contract`, `build-execution-context`, `acquire-stage-run`, `submit-stage-result`, `judge-stage-result`, `board-snapshot`, `serve-board`, `panel-snapshot`.
 - Merged `current-stage` + `step` → `status --verbose`; `panel-snapshot` → `panel --json`; `judge-stage-result` → `verify-stage-result --dry-run`.
 

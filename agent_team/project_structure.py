@@ -77,6 +77,36 @@ class ProjectStructure:
         return payload
 
 
+@model_dataclass
+class ProjectUpdateAction:
+    action: str
+    path: Path
+    message: str
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "action": self.action,
+            "path": str(self.path),
+            "message": self.message,
+        }
+
+
+@model_dataclass
+class ProjectUpdateReport:
+    structure: ProjectStructure
+    dry_run: bool
+    cleanup_deprecated: bool
+    actions: list[ProjectUpdateAction]
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "structure": self.structure.to_dict(),
+            "dry_run": self.dry_run,
+            "cleanup_deprecated": self.cleanup_deprecated,
+            "actions": [action.to_dict() for action in self.actions],
+        }
+
+
 def detect_project_structure(repo_root: Path) -> ProjectStructure:
     repo_root = repo_root.resolve()
     agent_team_root = repo_root / "agent-team"
@@ -135,6 +165,47 @@ def ensure_project_structure(repo_root: Path) -> ProjectStructure:
                 packaged_text("roles", role_name, "contract.md"),
             )
     return structure
+
+
+def update_project_structure(
+    repo_root: Path,
+    *,
+    dry_run: bool = False,
+    cleanup_deprecated: bool = False,
+) -> ProjectUpdateReport:
+    structure = detect_project_structure(repo_root)
+    if not structure.project_root.exists():
+        raise FileNotFoundError(
+            f"Agent Team project structure not found: {structure.project_root}. Run `agent-team init` first."
+        )
+
+    actions: list[ProjectUpdateAction] = []
+    _update_doc_map(structure=structure, actions=actions, dry_run=dry_run)
+    _ensure_project_text(
+        structure.project_root / "context.md",
+        "# Project Context\n\nDescribe the project-level context here.\n",
+        actions=actions,
+        dry_run=dry_run,
+    )
+    _ensure_project_text(
+        structure.project_root / "rules.md",
+        "# Project Rules\n\nAdd project-level Agent Team rules here.\n",
+        actions=actions,
+        dry_run=dry_run,
+    )
+    _update_role_templates(structure.project_root / "roles", actions=actions, dry_run=dry_run)
+    _handle_deprecated_project_roles(
+        structure.project_root / "roles",
+        actions=actions,
+        dry_run=dry_run,
+        cleanup_deprecated=cleanup_deprecated,
+    )
+    return ProjectUpdateReport(
+        structure=structure,
+        dry_run=dry_run,
+        cleanup_deprecated=cleanup_deprecated,
+        actions=actions,
+    )
 
 
 def resolve_role_context_paths(repo_root: Path, role_name: str) -> RoleContextPaths:
@@ -199,11 +270,76 @@ def _write_doc_map(path: Path, doc_map: dict[str, str]) -> None:
     path.write_text(json.dumps(doc_map, indent=2, sort_keys=True) + "\n")
 
 
+def _update_doc_map(*, structure: ProjectStructure, actions: list[ProjectUpdateAction], dry_run: bool) -> None:
+    existing_text = structure.doc_map_path.read_text() if structure.doc_map_path.exists() else ""
+    updated_text = json.dumps(structure.doc_map, indent=2, sort_keys=True) + "\n"
+    if existing_text == updated_text:
+        actions.append(ProjectUpdateAction("skipped", structure.doc_map_path, "doc-map.json 已是最新结构。"))
+        return
+    action = "would_update" if dry_run else "updated"
+    actions.append(ProjectUpdateAction(action, structure.doc_map_path, "迁移或补齐 doc-map.json。"))
+    if not dry_run:
+        _write_doc_map(structure.doc_map_path, structure.doc_map)
+
+
 def _ensure_text(path: Path, content: str) -> None:
     if path.exists():
         return
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content)
+
+
+def _ensure_project_text(
+    path: Path,
+    content: str,
+    *,
+    actions: list[ProjectUpdateAction],
+    dry_run: bool,
+) -> None:
+    if path.exists():
+        actions.append(ProjectUpdateAction("skipped", path, "已存在，未覆盖。"))
+        return
+    action = "would_create" if dry_run else "created"
+    actions.append(ProjectUpdateAction(action, path, "补齐缺失的项目级配置文件。"))
+    if not dry_run:
+        _ensure_text(path, content)
+
+
+def _update_role_templates(roles_dir: Path, *, actions: list[ProjectUpdateAction], dry_run: bool) -> None:
+    for role_name in STAGES:
+        slug = ROLE_SLUGS[role_name]
+        for suffix, content_name in (("context", "context.md"), ("contract", "contract.md")):
+            path = roles_dir / f"{slug}.{suffix}.md"
+            if path.exists():
+                actions.append(ProjectUpdateAction("skipped", path, "角色模板已存在，未覆盖。"))
+                continue
+            action = "would_create" if dry_run else "created"
+            actions.append(ProjectUpdateAction(action, path, "补齐缺失的新版角色模板。"))
+            if not dry_run:
+                _ensure_text(path, packaged_text("roles", role_name, content_name))
+
+
+def _handle_deprecated_project_roles(
+    roles_dir: Path,
+    *,
+    actions: list[ProjectUpdateAction],
+    dry_run: bool,
+    cleanup_deprecated: bool,
+) -> None:
+    if not roles_dir.exists():
+        return
+    for slug in DEPRECATED_ROLE_SLUGS:
+        for suffix in ("context", "contract"):
+            path = roles_dir / f"{slug}.{suffix}.md"
+            if not path.exists():
+                continue
+            if cleanup_deprecated:
+                action = "would_delete" if dry_run else "deleted"
+                actions.append(ProjectUpdateAction(action, path, "删除废弃角色模板。"))
+                if not dry_run:
+                    path.unlink()
+                continue
+            actions.append(ProjectUpdateAction("deprecated", path, "检测到废弃角色模板；如需删除请使用 --cleanup-deprecated。"))
 
 
 def _remove_deprecated_project_roles(roles_dir: Path) -> None:

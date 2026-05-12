@@ -36,6 +36,7 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0)
         self.assertIn("init", result.stdout)
+        self.assertIn("update", result.stdout)
         self.assertIn("run", result.stdout)
         self.assertIn("panel", result.stdout)
         self.assertIn("status", result.stdout)
@@ -79,6 +80,72 @@ class CliTests(unittest.TestCase):
             self.assertTrue((repo_root / "agent-team" / "project" / "doc-map.json").is_file())
             self.assertTrue((repo_root / "agent-team" / "project" / "five-layer" / "classification-prompt.md").is_file())
             self.assertTrue((repo_root / "agent-team" / "project" / "five-layer" / "classification-run.json").is_file())
+
+    def test_update_reports_and_preserves_existing_project_files(self) -> None:
+        with TemporaryDirectory(dir=local_temp_dir()) as temp_dir:
+            repo_root = Path(temp_dir) / "repo"
+            project_dir = repo_root / "agent-team" / "project"
+            roles_dir = project_dir / "roles"
+            roles_dir.mkdir(parents=True, exist_ok=True)
+            (project_dir / "context.md").write_text("# Custom Context\n")
+            (project_dir / "rules.md").write_text("# Custom Rules\n")
+            (project_dir / "doc-map.json").write_text(json.dumps({"product_definition": "docs/requirements"}))
+            (roles_dir / "dev.context.md").write_text("# Legacy Dev\n")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "agent_team",
+                    "--repo-root",
+                    str(repo_root),
+                    "update",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("Agent Team 项目配置更新", result.stdout)
+            self.assertIn("dry_run: false", result.stdout)
+            self.assertIn("已创建", result.stdout)
+            self.assertIn("已保留", result.stdout)
+            self.assertEqual((project_dir / "context.md").read_text(), "# Custom Context\n")
+            self.assertEqual((project_dir / "rules.md").read_text(), "# Custom Rules\n")
+            self.assertTrue((roles_dir / "dev.context.md").exists())
+            doc_map = json.loads((project_dir / "doc-map.json").read_text())
+            self.assertEqual(doc_map["product_definition"], "docs/requirements")
+            self.assertEqual(doc_map["project_runtime"], "docs/project-runtime")
+
+    def test_update_dry_run_does_not_write_files(self) -> None:
+        with TemporaryDirectory(dir=local_temp_dir()) as temp_dir:
+            repo_root = Path(temp_dir) / "repo"
+            project_dir = repo_root / "agent-team" / "project"
+            project_dir.mkdir(parents=True)
+            (project_dir / "doc-map.json").write_text(json.dumps({"requirements": "docs/requirements"}))
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "agent_team",
+                    "--repo-root",
+                    str(repo_root),
+                    "update",
+                    "--dry-run",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("dry_run: true", result.stdout)
+            self.assertIn("预览更新", result.stdout)
+            self.assertEqual((project_dir / "doc-map.json").read_text(), json.dumps({"requirements": "docs/requirements"}))
+            self.assertFalse((project_dir / "context.md").exists())
+            self.assertFalse((repo_root / ".agent-team").exists())
 
     def test_run_help_lists_skill_overrides(self) -> None:
         result = subprocess.run(
@@ -247,8 +314,8 @@ class CliTests(unittest.TestCase):
         self.assertIn("Route · 读取需求", first_line)
         self.assertIn("Route · 识别层级", second_line)
         self.assertIn(
-            "Technical Design · 生成阶段契约",
-            _render_running_progress_line(stage="TechnicalDesign", completed=3, phase=0, activity="生成阶段契约"),
+            "Technical Design · 准备上下文",
+            _render_running_progress_line(stage="TechnicalDesign", completed=3, phase=0, activity="准备上下文"),
         )
 
     def test_run_requirement_animation_wraps_interactive_stage_line(self) -> None:
@@ -419,6 +486,16 @@ class CliTests(unittest.TestCase):
             self.assertIn("当前阶段执行被阻塞", output)
             self.assertIn("诊断信息:", output)
             self.assertIn("Session saved.", output)
+
+    def test_blocked_next_step_points_users_to_alignment_questions(self) -> None:
+        from agent_team.cli import _run_requirement_blocked_next_step_text, _run_requirement_next_step_text
+
+        self.assertIn("product-definition-delta.md", _run_requirement_blocked_next_step_text("ProductDefinition"))
+        self.assertIn("澄清问题", _run_requirement_blocked_next_step_text("ProductDefinition"))
+        self.assertIn("technical-design.md", _run_requirement_blocked_next_step_text("TechnicalDesign"))
+        self.assertIn("待确认问题", _run_requirement_blocked_next_step_text("TechnicalDesign"))
+        self.assertIn("澄清问题", _run_requirement_next_step_text("ProductDefinition"))
+        self.assertIn("待确认问题", _run_requirement_next_step_text("TechnicalDesign"))
 
     def test_run_requirement_dry_run_stops_at_technical_design_gate_after_product_definition_go(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
@@ -685,6 +762,80 @@ class CliTests(unittest.TestCase):
                     / "route-command-stderr.txt"
                 ).read_text(),
             )
+
+    def test_run_requirement_stage_report_prints_worktree_changes(self) -> None:
+        with TemporaryDirectory(dir=local_temp_dir()) as temp_dir:
+            root = Path(temp_dir)
+            repo_root = root / "repo"
+            repo_root.mkdir()
+            subprocess.run(["git", "init"], cwd=repo_root, capture_output=True, text=True, check=True)
+            (repo_root / "existing.txt").write_text("clean baseline\n")
+            subprocess.run(["git", "add", "existing.txt"], cwd=repo_root, capture_output=True, text=True, check=True)
+            subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "user.name=Agent Team Test",
+                    "-c",
+                    "user.email=agent-team@example.invalid",
+                    "commit",
+                    "-m",
+                    "init",
+                ],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            (repo_root / "existing.txt").write_text("dirty before stage\n")
+            worker_path = root / "stage_worker.py"
+            worker_path.write_text(
+                "import json, os\n"
+                "from pathlib import Path\n"
+                "stage = os.environ['AGENT_TEAM_STAGE']\n"
+                "repo = Path(os.environ['AGENT_TEAM_REPO_ROOT'])\n"
+                "if stage == 'ProductDefinition':\n"
+                "    (repo / 'existing.txt').write_text('dirty after stage\\n')\n"
+                "    (repo / 'created.txt').write_text('created by stage\\n')\n"
+                "payloads = {\n"
+                "  'Route': {'status': 'completed', 'artifact_content': '{\"affected_layers\":[\"L1\"]}', 'journal': '', 'evidence': [{'name': 'route_classification', 'kind': 'artifact', 'summary': 'routed'}], 'summary': 'route'},\n"
+                "  'ProductDefinition': {'status': 'completed', 'artifact_content': '# Product Definition Delta\\n', 'journal': '', 'evidence': [{'name': 'l1_classification', 'kind': 'artifact', 'summary': 'l1'}], 'summary': 'l1'},\n"
+                "}\n"
+                "payload = payloads[stage]\n"
+                "payload.setdefault('findings', [])\n"
+                "payload.setdefault('suggested_next_owner', '')\n"
+                "payload.setdefault('acceptance_status', '')\n"
+                "payload.setdefault('blocked_reason', '')\n"
+                "Path(os.environ['AGENT_TEAM_RESULT_BUNDLE']).write_text(json.dumps(payload))\n"
+            )
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "agent_team",
+                    "--repo-root",
+                    str(repo_root),
+                    "--state-root",
+                    str(root / "state"),
+                    "run",
+                    "--message",
+                    "执行这个需求：验证 CLI 展示工作树改动",
+                    "--executor",
+                    "command",
+                    "--executor-command",
+                    f"{sys.executable} {worker_path}",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("本阶段改动:", result.stdout)
+        self.assertIn("created.txt", result.stdout)
+        self.assertIn("existing.txt", result.stdout)
+        self.assertIn("执行前已 dirty", result.stdout)
 
     def test_panel_json_prints_snapshot(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
@@ -956,6 +1107,75 @@ class CliTests(unittest.TestCase):
             self.assertIn("current_state: Implementation", result.stdout)
             self.assertIn("current_stage: Implementation", result.stdout)
             self.assertIn("human_decision: rework", result.stdout)
+
+
+    def test_run_defaults_to_new_isolated_worktree_and_continue_reuses_it(self) -> None:
+        from agent_team.cli import main
+
+        with TemporaryDirectory(dir=local_temp_dir()) as temp_dir:
+            repo_root = Path(temp_dir) / "repo"
+            repo_root.mkdir()
+            subprocess.run(["git", "init"], cwd=repo_root, capture_output=True, text=True, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo_root, check=True)
+            subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo_root, check=True)
+            (repo_root / "README.md").write_text("# test repo\n")
+            subprocess.run(["git", "add", "README.md"], cwd=repo_root, capture_output=True, text=True, check=True)
+            subprocess.run(["git", "commit", "-m", "initial"], cwd=repo_root, capture_output=True, text=True, check=True)
+
+            stdout = io.StringIO()
+            with patch("sys.stdout", stdout):
+                exit_code = main(
+                    [
+                        "--repo-root",
+                        str(repo_root),
+                        "run",
+                        "--message",
+                        "新增 登录 按钮",
+                        "--executor",
+                        "dry-run",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            output = stdout.getvalue()
+            self.assertIn("worktree_path:", output)
+            self.assertIn("branch: agent-team/", output)
+            self.assertIn("新增-登录-按钮", output)
+            session_id = _session_id_from_stdout(output)
+
+            index_path = repo_root / ".agent-team" / "session-index.json"
+            index_payload = json.loads(index_path.read_text())
+            entry = index_payload["sessions"][0]
+            self.assertEqual(entry["session_id"], session_id)
+            self.assertIn("新增-登录-按钮", entry["branch"])
+            worktree_path = Path(entry["worktree_path"])
+            self.assertTrue(worktree_path.exists())
+            self.assertTrue((worktree_path / ".agent-team" / session_id / "product-definition-delta.md").exists())
+
+            continue_stdout = io.StringIO()
+            with patch("sys.stdout", continue_stdout):
+                continue_exit_code = main(
+                    [
+                        "--repo-root",
+                        str(repo_root),
+                        "continue",
+                        "--executor",
+                        "dry-run",
+                    ]
+                )
+
+            self.assertEqual(continue_exit_code, 0)
+            continue_output = continue_stdout.getvalue()
+            self.assertIn(f"session_id: {session_id}", continue_output)
+            self.assertEqual(len(list((repo_root / ".worktrees").iterdir())), 1)
+
+    def test_continue_accepts_session_id_positional_alias(self) -> None:
+        from agent_team.cli import _normalize_command_aliases
+
+        self.assertEqual(
+            _normalize_command_aliases(["--repo-root", "/tmp/repo", "continue", "abc123", "--executor", "dry-run"]),
+            ["--repo-root", "/tmp/repo", "run", "--continue", "--session-id", "abc123", "--executor", "dry-run"],
+        )
 
 
 if __name__ == "__main__":
