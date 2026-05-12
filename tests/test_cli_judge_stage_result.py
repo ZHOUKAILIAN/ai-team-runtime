@@ -94,7 +94,7 @@ class JudgeStageResultCliTests(unittest.TestCase):
 
             self.assertEqual(result.returncode, 0)
             self.assertIn("current_state: WaitForProductDefinitionApproval", result.stdout)
-            self.assertIn("next_action: record-human-decision", result.stdout)
+            self.assertIn("next_action: approve", result.stdout)
 
     def test_verify_stage_result_with_noop_judge_advances_workflow(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
