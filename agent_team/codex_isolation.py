@@ -7,17 +7,19 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Iterator
 
+from .executor_env import build_executor_env
+
 
 def default_codex_home() -> Path:
     return Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
 
 
 @contextmanager
-def isolated_codex_env() -> Iterator[dict[str, str]]:
+def isolated_codex_env(*, env_config_path: Path | None = None) -> Iterator[dict[str, str]]:
     with TemporaryDirectory(prefix="agent-team-codex-home-") as temp_dir:
         target_home = Path(temp_dir)
         prepare_isolated_codex_home(source_home=default_codex_home(), target_home=target_home)
-        env = os.environ.copy()
+        env = build_executor_env(config_path=env_config_path)
         env["CODEX_HOME"] = str(target_home)
         yield env
 

@@ -379,6 +379,93 @@ class RuntimeDriverSchemaTests(unittest.TestCase):
         self.assertEqual(envelope.contract_id, "contract")
         self.assertEqual(envelope.artifact_name, "product-definition-delta.md")
 
+    def test_codex_exec_stage_executor_uses_executor_env_config(self) -> None:
+        from agent_team.execution_context import StageExecutionContext
+        from agent_team.models import StageContract
+        from agent_team.runtime_driver import CodexExecStageExecutor, RuntimeDriverOptions, StageExecutionRequest
+
+        captured_env = {}
+
+        def fake_run(command, *, cwd, capture_output, text, timeout, check, env=None, stdin=None):
+            captured_env.update(env or {})
+            output_path = Path(command[command.index("-o") + 1])
+            output_path.write_text(
+                json.dumps(
+                    {
+                        "status": "completed",
+                        "artifact_content": "# Product Definition Delta\n",
+                        "journal": "",
+                        "findings": [],
+                        "evidence": [],
+                        "suggested_next_owner": "",
+                        "summary": "ProductDefinition completed.",
+                        "acceptance_status": "",
+                        "blocked_reason": "",
+                    }
+                )
+            )
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+        with TemporaryDirectory(dir=local_temp_dir()) as temp_dir:
+            root = Path(temp_dir)
+            config_path = root / "executor-env.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "inherit": ["PATH", "OPENAI_API_KEY"],
+                        "set": {"AGENT_TEAM_ALLOWED": "yes"},
+                    }
+                )
+            )
+            request = StageExecutionRequest(
+                repo_root=root,
+                state_store=None,
+                session_id="session",
+                run_id="product-definition-run-1",
+                contract=StageContract(
+                    session_id="session",
+                    stage="ProductDefinition",
+                    goal="Write an L1 delta.",
+                    contract_id="contract",
+                    required_outputs=["product-definition-delta.md"],
+                ),
+                context=StageExecutionContext(
+                    session_id="session",
+                    stage="ProductDefinition",
+                    round_index=1,
+                    context_id="context",
+                    contract_id="contract",
+                    original_request_summary="写个js文件，并打印hello world",
+                    approved_product_definition_summary="",
+                    acceptance_matrix=[],
+                    constraints=[],
+                    required_outputs=["product-definition-delta.md"],
+                    required_evidence=[],
+                    relevant_artifacts=[],
+                ),
+                contract_path=root / "contract.json",
+                context_path=root / "context.json",
+                result_path=root / "result.json",
+                output_schema_path=root / "schema.json",
+                prompt_path=root / "prompt.md",
+                executor_env_config_path=config_path,
+            )
+
+            with patch.dict(
+                "os.environ",
+                {"PATH": "/bin", "OPENAI_API_KEY": "openai-secret", "DATABASE_URL": "postgres://secret"},
+                clear=True,
+            ):
+                with patch("agent_team.runtime_driver.subprocess.run", fake_run):
+                    envelope = CodexExecStageExecutor(RuntimeDriverOptions()).execute(request)
+
+        self.assertEqual(envelope.session_id, "session")
+        self.assertEqual(captured_env["PATH"], "/bin")
+        self.assertEqual(captured_env["OPENAI_API_KEY"], "openai-secret")
+        self.assertEqual(captured_env["AGENT_TEAM_ALLOWED"], "yes")
+        self.assertIn("CODEX_HOME", captured_env)
+        self.assertNotIn("DATABASE_URL", captured_env)
+
     def test_codex_exec_repairs_output_protocol_error_once(self) -> None:
         from agent_team.execution_context import StageExecutionContext
         from agent_team.models import StageContract

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from .codex_isolation import isolated_codex_env
+from .executor_env import build_executor_env, executor_env_config_path
 from .execution_context import StageExecutionContext, build_stage_execution_context
 from .gate_evaluator import GateEvaluator, NoopJudge
 from .gatekeeper import evaluate_candidate
@@ -102,6 +103,7 @@ class StageExecutionRequest:
     stdout_path: Path | None = None
     stderr_path: Path | None = None
     skills: list[Skill] = field(default_factory=list)
+    executor_env_config_path: Path | None = None
 
 
 class RuntimeDriverError(RuntimeError):
@@ -290,7 +292,7 @@ class CommandStageExecutor:
 
     def execute(self, request: StageExecutionRequest) -> StageResultEnvelope:
         request.result_path.parent.mkdir(parents=True, exist_ok=True)
-        env = os.environ.copy()
+        env = build_executor_env(config_path=request.executor_env_config_path)
         env.update(_stage_environment(request))
         try:
             completed = subprocess.run(
@@ -405,7 +407,7 @@ class CodexExecStageExecutor:
         command.append(prompt)
         try:
             if self.options.codex_isolate_home:
-                with isolated_codex_env() as env:
+                with isolated_codex_env(env_config_path=request.executor_env_config_path) as env:
                     return subprocess.run(
                         command,
                         cwd=request.repo_root,
@@ -844,6 +846,7 @@ def _execute_stage(
         stdout_path=store.command_stdout_path(session, stage, run.attempt),
         stderr_path=store.command_stderr_path(session, stage, run.attempt),
         skills=stage_skills,
+        executor_env_config_path=executor_env_config_path(store.root),
     )
     request.contract_path.parent.mkdir(parents=True, exist_ok=True)
     request.contract_path.write_text(json.dumps(contract.to_dict(), ensure_ascii=False, indent=2))

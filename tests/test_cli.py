@@ -83,8 +83,10 @@ class CliTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0)
             self.assertIn("state_root:", result.stdout)
             self.assertIn("project_root:", result.stdout)
+            self.assertIn("executor_env_config:", result.stdout)
             self.assertIn("five_layer_classification_status: skipped", result.stdout)
             self.assertTrue((repo_root / ".agent-team" / "memory").is_dir())
+            self.assertTrue((repo_root / ".agent-team" / "executor-env.json").is_file())
             self.assertTrue((repo_root / "agent-team" / "project" / "doc-map.json").is_file())
             self.assertTrue((repo_root / "agent-team" / "project" / "five-layer" / "classification-prompt.md").is_file())
             self.assertTrue((repo_root / "agent-team" / "project" / "five-layer" / "classification-run.json").is_file())
@@ -1291,6 +1293,10 @@ class CliTests(unittest.TestCase):
             worktree_path = Path(entry["worktree_path"])
             self.assertTrue(worktree_path.exists())
             self.assertTrue((worktree_path / ".agent-team" / session_id / "product-definition-delta.md").exists())
+            self.assertEqual(
+                (worktree_path / ".agent-team" / "executor-env.json").read_text(),
+                (repo_root / ".agent-team" / "executor-env.json").read_text(),
+            )
 
             continue_stdout = io.StringIO()
             with patch("sys.stdout", continue_stdout):
