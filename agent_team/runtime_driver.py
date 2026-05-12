@@ -19,7 +19,7 @@ from .models import EvidenceItem, Finding, GateResult, StageContract, StageResul
 from .openai_sandbox_judge import OpenAISandboxJudge, OpenAISandboxJudgeUnavailable
 from .stage_contracts import build_stage_contract
 from .stage_machine import StageMachine
-from .stage_payload import envelope_from_stage_payload
+from .stage_payload import ALLOWED_STAGE_PAYLOAD_FIELDS, FORBIDDEN_STAGE_PAYLOAD_FIELDS, envelope_from_stage_payload
 from .stage_policies import default_policy_registry
 from .state import StageRunStateError, StateStore, artifact_name_for_stage
 from .skill_registry import Skill, skill_injection_text, skill_scope
@@ -66,6 +66,7 @@ class RuntimeDriverOptions:
     codex_skip_git_repo_check: bool = True
     interactive: bool = False
     trace_prompts: bool = False
+    max_output_repair_attempts: int = 2
 
 
 @dataclass(slots=True)
@@ -104,6 +105,10 @@ class StageExecutionRequest:
 
 
 class RuntimeDriverError(RuntimeError):
+    pass
+
+
+class StagePayloadProtocolError(ValueError):
     pass
 
 
@@ -343,6 +348,35 @@ class CodexExecStageExecutor:
         if request.prompt_path is not None:
             request.prompt_path.parent.mkdir(parents=True, exist_ok=True)
             request.prompt_path.write_text(prompt)
+
+        completed = self._run_codex(request, prompt=prompt, output_path=request.result_path)
+        _write_stage_run_streams(request, stdout=completed.stdout, stderr=completed.stderr)
+        if completed.returncode != 0 and not request.result_path.exists():
+            return _blocked_result_from_process(
+                request=request,
+                command="codex exec",
+                stdout=completed.stdout,
+                stderr=completed.stderr,
+                exit_code=completed.returncode,
+            )
+        if not request.result_path.exists():
+            raise RuntimeDriverError("codex exec completed without writing the stage result file.")
+
+        raw_output = request.result_path.read_text()
+        try:
+            return _parse_stage_result_json_text(request=request, value=raw_output, source=str(request.result_path))
+        except StagePayloadProtocolError as exc:
+            if self.options.max_output_repair_attempts <= 0:
+                return _invalid_stage_payload_result(request=request, value=raw_output, source=str(request.result_path), error=exc)
+            return self._repair_stage_output(request=request, previous_output=raw_output, error=exc)
+
+    def _run_codex(
+        self,
+        request: StageExecutionRequest,
+        *,
+        prompt: str,
+        output_path: Path,
+    ) -> subprocess.CompletedProcess[str]:
         command = [
             "codex",
             "exec",
@@ -355,7 +389,7 @@ class CodexExecStageExecutor:
             "--output-schema",
             str(request.output_schema_path),
             "-o",
-            str(request.result_path),
+            str(output_path),
         ]
         if self.options.codex_ignore_rules:
             command.append("--ignore-rules")
@@ -372,7 +406,7 @@ class CodexExecStageExecutor:
         try:
             if self.options.codex_isolate_home:
                 with isolated_codex_env() as env:
-                    completed = subprocess.run(
+                    return subprocess.run(
                         command,
                         cwd=request.repo_root,
                         capture_output=True,
@@ -382,55 +416,86 @@ class CodexExecStageExecutor:
                         env=env,
                         stdin=subprocess.DEVNULL,
                     )
-            else:
-                completed = subprocess.run(
-                    command,
-                    cwd=request.repo_root,
-                    capture_output=True,
-                    text=True,
-                    timeout=self.options.command_timeout_seconds,
-                    check=False,
-                    stdin=subprocess.DEVNULL,
-                )
-        except FileNotFoundError as exc:
-            _write_stage_run_streams(request, stdout="", stderr=str(exc))
-            return _blocked_result_from_process(
-                request=request,
-                command="codex exec",
-                stdout="",
-                stderr=str(exc),
-                exit_code=127,
+            return subprocess.run(
+                command,
+                cwd=request.repo_root,
+                capture_output=True,
+                text=True,
+                timeout=self.options.command_timeout_seconds,
+                check=False,
+                stdin=subprocess.DEVNULL,
             )
+        except FileNotFoundError as exc:
+            return subprocess.CompletedProcess(command, 127, stdout="", stderr=str(exc))
         except subprocess.TimeoutExpired as exc:
             stdout = _coerce_stream_text(exc.stdout)
             stderr = _coerce_stream_text(exc.stderr) or f"codex exec timed out after {self.options.command_timeout_seconds} seconds."
+            return subprocess.CompletedProcess(command, 124, stdout=stdout, stderr=stderr)
+
+    def _repair_stage_output(
+        self,
+        *,
+        request: StageExecutionRequest,
+        previous_output: str,
+        error: Exception,
+    ) -> StageResultEnvelope:
+        current_output = previous_output
+        current_error: Exception = error
+        last_source = str(request.result_path)
+        max_attempts = max(0, self.options.max_output_repair_attempts)
+        for attempt in range(1, max_attempts + 1):
+            repair_path = request.result_path.with_name(
+                f"{request.result_path.stem}-repair-{attempt}{request.result_path.suffix}"
+            )
+            repair_prompt = _build_output_repair_prompt(
+                request=request,
+                error=str(current_error),
+                previous_output=current_output,
+            )
+            if request.prompt_path is not None:
+                repair_prompt_path = request.prompt_path.with_name(
+                    f"{request.prompt_path.stem}-repair-{attempt}{request.prompt_path.suffix}"
+                )
+                repair_prompt_path.write_text(repair_prompt)
+
+            completed = self._run_codex(request, prompt=repair_prompt, output_path=repair_path)
+            stdout = _coerce_stream_text(completed.stdout)
+            stderr = _coerce_stream_text(completed.stderr)
+            existing_stdout = request.stdout_path.read_text() if request.stdout_path and request.stdout_path.exists() else ""
+            existing_stderr = request.stderr_path.read_text() if request.stderr_path and request.stderr_path.exists() else ""
             _write_stage_run_streams(
                 request,
-                stdout=stdout,
-                stderr=stderr,
+                stdout=(existing_stdout + f"\n\n[output repair {attempt} stdout]\n" + stdout).strip(),
+                stderr=(existing_stderr + f"\n\n[output repair {attempt} stderr]\n" + stderr).strip(),
             )
-            return _blocked_result_from_process(
-                request=request,
-                command="codex exec",
-                stdout=stdout,
-                stderr=stderr,
-                exit_code=124,
-            )
-        _write_stage_run_streams(request, stdout=completed.stdout, stderr=completed.stderr)
-        if completed.returncode != 0 and not request.result_path.exists():
-            return _blocked_result_from_process(
-                request=request,
-                command=" ".join(command[:2]),
-                stdout=completed.stdout,
-                stderr=completed.stderr,
-                exit_code=completed.returncode,
-            )
-        if not request.result_path.exists():
-            raise RuntimeDriverError("codex exec completed without writing the stage result file.")
-        return _stage_result_from_json_text(
+            if completed.returncode != 0 and not repair_path.exists():
+                current_error = StagePayloadProtocolError(
+                    f"Stage output protocol repair attempt {attempt} failed before producing a result: {stderr or stdout}"
+                )
+                last_source = str(repair_path)
+                continue
+            if not repair_path.exists():
+                current_error = StagePayloadProtocolError(
+                    f"Stage output protocol repair attempt {attempt} completed without writing a result file."
+                )
+                last_source = str(repair_path)
+                continue
+            current_output = repair_path.read_text()
+            last_source = str(repair_path)
+            try:
+                return _parse_stage_result_json_text(request=request, value=current_output, source=str(repair_path))
+            except StagePayloadProtocolError as repair_error:
+                current_error = StagePayloadProtocolError(
+                    f"Stage output protocol repair attempt {attempt} failed: {repair_error}. Original error: {error}"
+                )
+
+        return _invalid_stage_payload_result(
             request=request,
-            value=request.result_path.read_text(),
-            source=str(request.result_path),
+            value=current_output,
+            source=last_source,
+            error=StagePayloadProtocolError(
+                f"Stage output protocol repair failed after {max_attempts} attempt(s): {current_error}"
+            ),
         )
 
 
@@ -1209,18 +1274,21 @@ def _dry_run_artifact_content(stage: str, context: StageExecutionContext, *, art
             "}\n"
         )
     if stage == "ProductDefinition":
-        revision_summary = _human_revision_summary(context.actionable_findings)
-        revision_section = (
-            "\n## 人工修改意见\n"
-            f"{revision_summary}\n"
-            "这些意见必须先判断是否属于 L1；非 L1 内容应下沉到对应层，不得混入产品定义。\n"
-            if revision_summary
+        alignment_summary = _stage_alignment_update_summary(context.actionable_findings)
+        alignment_section = (
+            "\n## 阶段对齐更新\n"
+            f"{alignment_summary}\n"
+            "这些澄清或返工意见必须被吸收到本次重新生成的正式产品定义 delta 中；"
+            "非 L1 内容应下沉到对应层，不得作为旁路备注继续传递。\n"
+            if alignment_summary
             else ""
         )
         return (
             "# Product Definition Delta\n\n"
             f"## 原始需求\n{context.original_request_summary}\n\n"
-            f"{revision_section}"
+            "## 理解复述\n"
+            "- 本阶段先复述需求意图、成功标准和非目标；若缺少 L1 决策，应先提出澄清问题而不是猜测。\n\n"
+            f"{alignment_section}"
             "## L1 候选\n"
             "- 待人工确认的稳定产品语义、核心对象、职责边界和长期规则。\n\n"
             "## 非 L1 内容\n"
@@ -1239,42 +1307,28 @@ def _dry_run_artifact_content(stage: str, context: StageExecutionContext, *, art
         )
     if stage == "TechnicalDesign":
         return (
-            "# Technical Design\n\n"
-            "## 执行流程\n\n"
-            "```mermaid\n"
-            "flowchart TD\n"
-            "    A[读取 Route 和 L1/L3 delta] --> B[识别 L2 影响范围]\n"
-            "    B --> C[设计实现步骤]\n"
-            "    C --> D[定义验证命令和回滚策略]\n"
-            "```\n\n"
-            "## 变更范围\n\n"
-            "| 项目 | 内容 |\n"
-            "| --- | --- |\n"
-            "| 实现策略 | 服从已确认 L1/L3 delta，更新 L2 实现现实 |\n"
-            "| 影响模块 | Implementation 阶段根据仓库结构确认 |\n"
-            "| 验证命令 | `agent-team runtime dry-run` |\n"
-            "| 预期结果 | passed |\n"
+            "- Write technical-design.md content in Simplified Chinese. Do not edit source code in this stage.\n"
+            "- If a material design choice is unresolved, return status `blocked` with focused questions in artifact_content.\n"
+            "- If understood, start with `## 方案理解复述`: approved requirement, chosen approach, scope, non-goals, and verification target.\n"
+            "- Include implementation approach, affected files/interfaces, verification plan, risks, and rollback.\n"
         )
     if stage == "Implementation":
         return (
-            "# Implementation\n\n"
-            "## Change Summary\n"
-            "- Runtime driver dry-run produced a valid Implementation handoff.\n\n"
-            "## Self Code Review\n"
-            "- Reviewed the dry-run handoff content.\n\n"
-            "## Self Verification\n"
-            "- command: agent-team runtime dry-run\n"
-            "- result: passed\n\n"
-            "## Verification Checklist\n"
-            "- Verify stage contract handoff artifacts.\n"
+            "- Write artifact_content as implementation.md in Simplified Chinese.\n"
+            "- Treat approved_technical_design_content as the implementation source of truth.\n"
+            "- Implement the approved technical design instead of replacing it with a new design.\n"
+            "- If the approved technical design is missing, contradictory, or too ambiguous to implement safely, return status `blocked` with focused questions in artifact_content.\n"
+            "- Keep changes scoped to the approved design.\n"
+            "- For server-side changes, run or prepare end-to-end verification from API/request to persisted data; if database access or query confirmation is needed, return status `blocked` with the exact evidence needed from the user.\n"
+            "- For frontend mini-program changes that cannot be launched locally, state the limitation and run available static, build, or unit checks instead of claiming runtime validation.\n"
+            "- The implementation report must name changed files, actual behavior changes, self-review results, commands run, skipped checks, and unresolved risks in Chinese."
         )
     if stage == "Verification":
         return (
-            "# Verification Report\n\n"
-            "## Decision\npassed\n\n"
-            "## Independent Verification\n"
-            "- command: agent-team runtime dry-run\n"
-            "- result: passed\n"
+            "- Write artifact_content as verification-report.md in Simplified Chinese. Independently verify Implementation evidence against L1, L2, L3, and the technical design.\n"
+            "- For server-side changes, verify the full path from API/request to persisted data; include command/request, response, and data evidence when available.\n"
+            "- If database evidence requires user-provided access, query results, or approval, return status `blocked` with the exact query/evidence request.\n"
+            "- For frontend mini-program changes that cannot be launched locally, state that limitation and verify with available static, build, or unit checks only."
         )
     if stage == "GovernanceReview":
         return (
@@ -1373,35 +1427,52 @@ def _blocked_result_from_process(
     )
 
 
-def _stage_result_from_json_text(*, request: StageExecutionRequest, value: str, source: str) -> StageResultEnvelope:
+def _parse_stage_result_json_text(*, request: StageExecutionRequest, value: str, source: str) -> StageResultEnvelope:
     try:
         payload = json.loads(value)
         if not isinstance(payload, dict):
             raise TypeError("stage result payload must be a JSON object")
         return _stage_result_from_payload_dict(request=request, payload=payload)
     except Exception as exc:
-        return StageResultEnvelope(
-            session_id=request.session_id,
-            stage=request.contract.stage,
-            status="blocked",
-            artifact_name=_contract_artifact_name(request.contract),
-            artifact_content=(
-                f"# {request.contract.stage} Blocked\n\n"
-                f"Executor produced invalid stage payload JSON from {source}.\n\n"
-                f"## Error\n\n```text\n{exc}\n```\n\n"
-                f"## Raw Output\n\n```text\n{value.strip()[:4000]}\n```\n"
-            ),
-            contract_id=request.contract.contract_id,
-            blocked_reason=f"Invalid stage payload JSON from {source}: {exc}",
-            evidence=[
-                EvidenceItem(
-                    name="executor_invalid_json",
-                    kind="artifact",
-                    summary=f"Runtime driver could not parse stage result JSON from {source}.",
-                    producer="runtime-driver",
-                )
-            ],
-        )
+        raise StagePayloadProtocolError(f"Invalid stage payload JSON from {source}: {exc}") from exc
+
+
+def _stage_result_from_json_text(*, request: StageExecutionRequest, value: str, source: str) -> StageResultEnvelope:
+    try:
+        return _parse_stage_result_json_text(request=request, value=value, source=source)
+    except StagePayloadProtocolError as exc:
+        return _invalid_stage_payload_result(request=request, value=value, source=source, error=exc)
+
+
+def _invalid_stage_payload_result(
+    *,
+    request: StageExecutionRequest,
+    value: str,
+    source: str,
+    error: Exception,
+) -> StageResultEnvelope:
+    return StageResultEnvelope(
+        session_id=request.session_id,
+        stage=request.contract.stage,
+        status="blocked",
+        artifact_name=_contract_artifact_name(request.contract),
+        artifact_content=(
+            f"# {request.contract.stage} Blocked\n\n"
+            f"Executor produced invalid stage payload JSON from {source}.\n\n"
+            f"## Error\n\n```text\n{error}\n```\n\n"
+            f"## Raw Output\n\n```text\n{value.strip()[:4000]}\n```\n"
+        ),
+        contract_id=request.contract.contract_id,
+        blocked_reason=str(error),
+        evidence=[
+            EvidenceItem(
+                name="executor_invalid_json",
+                kind="artifact",
+                summary=f"Runtime driver could not parse stage result JSON from {source}.",
+                producer="runtime-driver",
+            )
+        ],
+    )
 
 
 def _stage_result_from_payload_dict(
@@ -1418,6 +1489,31 @@ def _stage_result_from_payload_dict(
     )
 
 
+def _build_output_repair_prompt(*, request: StageExecutionRequest, error: str, previous_output: str) -> str:
+    required_evidence = list(getattr(request.contract, "evidence_requirements", []) or [])
+    required_outputs = list(getattr(request.contract, "required_outputs", []) or [])
+    allowed_fields = ", ".join(sorted(ALLOWED_STAGE_PAYLOAD_FIELDS))
+    forbidden_fields = ", ".join(sorted(FORBIDDEN_STAGE_PAYLOAD_FIELDS))
+    previous = previous_output.strip()[:12000]
+    return (
+        f"<agent_team_output_repair stage=\"{request.contract.stage}\">\n"
+        "Your previous response was rejected by the runtime output parser.\n"
+        "Do not continue the task, change product/design decisions, or add explanations.\n"
+        "Repair only the JSON envelope while preserving the stage document content as much as possible.\n\n"
+        "<output_rules>\n"
+        "Return only valid JSON stage payload. Remove runtime-controlled fields.\n"
+        "Keep the document in artifact_content and include contract-required evidence.\n"
+        "</output_rules>\n\n"
+        f"<error>{_xml_cdata(error)}</error>\n\n"
+        f"<allowed_fields>{_xml_cdata(allowed_fields)}</allowed_fields>\n"
+        f"<forbidden_fields>{_xml_cdata(forbidden_fields)}</forbidden_fields>\n"
+        f"<required_outputs>{_xml_cdata(json.dumps(required_outputs, ensure_ascii=False))}</required_outputs>\n"
+        f"<required_evidence>{_xml_cdata(json.dumps(required_evidence, ensure_ascii=False))}</required_evidence>\n\n"
+        f"<previous_output>{_xml_cdata(previous)}</previous_output>\n"
+        "</agent_team_output_repair>\n"
+    )
+
+
 def _build_codex_prompt(request: StageExecutionRequest) -> str:
     contract_json = json.dumps(request.contract.to_dict(), ensure_ascii=False, indent=2)
     context_json = json.dumps(request.context.to_dict(), ensure_ascii=False, indent=2)
@@ -1425,7 +1521,7 @@ def _build_codex_prompt(request: StageExecutionRequest) -> str:
         request.contract.stage,
         required_outputs=request.contract.required_outputs,
     )
-    human_revision_summary = _human_revision_summary(request.context.actionable_findings)
+    stage_alignment_updates = _stage_alignment_update_summary(request.context.actionable_findings)
     skill_text = skill_injection_text(
         request.skills,
         asset_root=str(request.skill_asset_root) if request.skill_asset_root is not None else ".agent-team/skills",
@@ -1436,42 +1532,28 @@ def _build_codex_prompt(request: StageExecutionRequest) -> str:
         "<role>\n"
         f"You are the {request.contract.stage} stage worker inside the Agent Team runtime driver.\n"
         "</role>\n\n"
-        "<instructions>\n"
-        "Execute exactly this stage. Do not call agent-team commands and do not advance workflow state.\n"
-        "The runtime driver will validate your JSON result against the stage contract after you return.\n"
-        "</instructions>\n\n"
+        "<stage_task>\n"
+        "Execute only this stage. Do not advance workflow state.\n"
+        "</stage_task>\n\n"
         f"{skill_section}"
-        "<human_revision_requests>\n"
-        "If human revision requests are present, treat them as authoritative updates for this rerun. "
-        "Apply them to the main artifact content and acceptance plan instead of only mentioning them "
-        "in a revision note.\n"
-        f"{_xml_cdata(human_revision_summary or 'None')}\n"
-        "</human_revision_requests>\n\n"
+        "<alignment_updates>\n"
+        "Use these only when regenerating this stage artifact; the corrected artifact feeds later stages.\n"
+        f"{_xml_cdata(stage_alignment_updates or 'None')}\n"
+        "</alignment_updates>\n\n"
         "<output_rules>\n"
-        "Return only a JSON object matching the provided output schema. Return only the stage payload; "
-        "the runtime driver will inject session_id, stage, contract_id, and artifact_name after you return.\n\n"
-        "Write every human-readable artifact, report, summary, risk, finding, and handoff note in Simplified Chinese "
-        "unless the user explicitly asks for another language. Keep schema field names, file paths, commands, "
-        "code identifiers, API names, and quoted source text unchanged when they must remain exact.\n\n"
-        "Do not include workflow identity or control fields such as session_id, stage, contract_id, "
-        "artifact_name, current_state, or current_stage. Use status `completed` for a completed stage, "
-        "`failed` when the current stage finds defects, or `blocked` when evidence cannot be produced. Every name listed "
-        "in stage_contract.evidence_requirements must appear as the exact `name` value of at least one evidence item. "
-        "You may add additional evidence items, but do not rename the required evidence items.\n\n"
-        "Put the required stage document in the JSON `artifact_content` field. Do not create or modify the required stage "
-        "artifact file in the repository working tree; the runtime driver archives artifact_content into the session artifact directory.\n\n"
-        "For optional string fields use an empty string, for optional arrays use [], "
-        "and for an evidence exit_code that is not a command use null.\n"
+        "Return only JSON stage payload.\n"
+        "Put the stage document in artifact_content.\n"
+        "Human-readable content must be Simplified Chinese.\n"
         "</output_rules>\n\n"
-        "<artifact_writing_rules>\n"
+        "<stage_rules>\n"
         f"{_xml_cdata(format_instructions)}\n"
-        "</artifact_writing_rules>\n\n"
+        "</stage_rules>\n\n"
         "<stage_contract>\n"
         f"{_xml_cdata(contract_json)}\n"
         "</stage_contract>\n\n"
-        "<stage_execution_context>\n"
+        "<stage_context>\n"
         f"{_xml_cdata(context_json)}\n"
-        "</stage_execution_context>\n"
+        "</stage_context>\n"
         "</agent_team_prompt>\n"
     )
 
@@ -1486,13 +1568,12 @@ def _stage_artifact_format_instructions(stage: str, *, required_outputs: list[st
         )
     if stage == "ProductDefinition":
         return (
-            "- Write artifact_content in Simplified Chinese unless the user explicitly asks for another language.\n"
-            "- artifact_content is product-definition-delta.md, not canonical product definition.\n"
-            "- Separate L1 candidates from non-L1 task content explicitly.\n"
-            "- ProductDefinition may propose stable product semantics, core objects, core operating model, "
-            "core responsibility boundaries, and long-term rules.\n"
-            "- ProductDefinition must not include implementation plans, local session notes, governance rules, "
-            "or research drafts as formal product truth."
+            "- Write product-definition-delta.md content in Simplified Chinese.\n"
+            "- If unclear or missing an L1 product decision, return status `blocked` with concise questions in artifact_content.\n"
+            "- If understood, start with `## 理解复述`: intent, success criteria, and explicit non-goals.\n"
+            "- Then separate `## L1 候选` from `## 非 L1 内容`.\n"
+            "- L1 means stable product semantics, core objects, operating model, responsibility boundaries, and long-term rules.\n"
+            "- Do not write implementation plans, local session notes, governance rules, or research drafts as product truth."
         )
     if stage == "ProjectRuntime":
         return (
@@ -1503,25 +1584,29 @@ def _stage_artifact_format_instructions(stage: str, *, required_outputs: list[st
         )
     if stage == "TechnicalDesign":
         return (
-            "- Write artifact_content as technical-design.md in Simplified Chinese unless the user asks otherwise.\n"
-            "- Do not edit repository source code in this pass.\n"
-            "- Prefer Mermaid flowcharts for execution flow and Markdown tables for scope, file changes, "
-            "interfaces, verification, risks, and rollback plans.\n"
-            "- Avoid bullet lists when the same information can be expressed as a flowchart or table.\n"
-            "- Include implementation approach, affected files, data/API/database/Redis considerations, "
-            "verification plan mapped to ProductDefinition and ProjectRuntime deltas, risks, rollback, "
-            "and questions for human approval."
+            "- Write technical-design.md content in Simplified Chinese. Do not edit source code in this stage.\n"
+            "- If a material design choice is unresolved, return status `blocked` with focused questions in artifact_content.\n"
+            "- If understood, start with `## 方案理解复述`: approved requirement, chosen approach, scope, non-goals, and verification target.\n"
+            "- Include implementation approach, affected files/interfaces, verification plan, risks, and rollback.\n"
         )
     if stage == "Implementation":
         return (
             "- Write artifact_content as implementation.md in Simplified Chinese.\n"
-            "- Treat StageExecutionContext.approved_technical_design_content as the approved technical design.\n"
-            "- Implement the technical design instead of replacing it with a new design.\n"
-            "- If approved_technical_design_content is empty, fall back to ProductDefinition, ProjectRuntime, and stage contract.\n"
+            "- Treat approved_technical_design_content as the implementation source of truth.\n"
+            "- Implement the approved technical design instead of replacing it with a new design.\n"
+            "- If the approved technical design is missing, contradictory, or too ambiguous to implement safely, return status `blocked` with focused questions in artifact_content.\n"
+            "- Keep changes scoped to the approved design.\n"
+            "- For server-side changes, run or prepare end-to-end verification from API/request to persisted data; if database access or query confirmation is needed, return status `blocked` with the exact evidence needed from the user.\n"
+            "- For frontend mini-program changes that cannot be launched locally, state the limitation and run available static, build, or unit checks instead of claiming runtime validation.\n"
             "- The implementation report must name changed files, actual behavior changes, self-review results, commands run, skipped checks, and unresolved risks in Chinese."
         )
     if stage == "Verification":
-        return "- Write artifact_content as verification-report.md in Simplified Chinese. Independently verify Implementation evidence against L1, L2, L3, and the technical design."
+        return (
+            "- Write artifact_content as verification-report.md in Simplified Chinese. Independently verify Implementation evidence against L1, L2, L3, and the technical design.\n"
+            "- For server-side changes, verify the full path from API/request to persisted data; include command/request, response, and data evidence when available.\n"
+            "- If database evidence requires user-provided access, query results, or approval, return status `blocked` with the exact query/evidence request.\n"
+            "- For frontend mini-program changes that cannot be launched locally, state that limitation and verify with available static, build, or unit checks only."
+        )
     if stage == "GovernanceReview":
         return "- Write artifact_content as governance-review.md in Simplified Chinese. Check five-layer boundary violations, evidence quality, writeback obligations, and merge readiness."
     if stage == "Acceptance":
@@ -1535,7 +1620,7 @@ def _xml_cdata(value: str) -> str:
     return "<![CDATA[" + value.replace("]]>", "]]]]><![CDATA[>") + "]]>"
 
 
-def _human_revision_summary(findings: list[Finding]) -> str:
+def _stage_alignment_update_summary(findings: list[Finding]) -> str:
     lines: list[str] = []
     for index, finding in enumerate(findings, start=1):
         issue = finding.issue.strip()

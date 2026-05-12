@@ -90,12 +90,20 @@ class RuntimeDriverSchemaTests(unittest.TestCase):
 
         prompt = _build_codex_prompt(request)
 
-        self.assertIn("Write artifact_content in Simplified Chinese", prompt)
-        self.assertIn("Write every human-readable artifact", prompt)
-        self.assertIn("Do not create or modify the required stage artifact file", prompt)
+        self.assertIn("Write product-definition-delta.md content in Simplified Chinese", prompt)
+        self.assertIn("Return only JSON stage payload", prompt)
+        self.assertIn("Human-readable content must be Simplified Chinese", prompt)
+        self.assertNotIn("Write every human-readable artifact", prompt)
+        self.assertIn("<alignment_updates>", prompt)
+        self.assertIn("corrected artifact feeds later stages", prompt)
+        self.assertNotIn("<human_revision_requests>", prompt)
+        self.assertIn("Put the stage document in artifact_content", prompt)
         self.assertIn("product-definition-delta.md", prompt)
-        self.assertIn("Separate L1 candidates from non-L1 task content explicitly", prompt)
-        self.assertIn("must not include implementation plans", prompt)
+        self.assertIn("If unclear or missing an L1 product decision", prompt)
+        self.assertIn("return status `blocked`", prompt)
+        self.assertIn("`## 理解复述`", prompt)
+        self.assertIn("Then separate `## L1 候选` from `## 非 L1 内容`", prompt)
+        self.assertIn("Do not write implementation plans", prompt)
         self.assertIn("确认哪些内容真正进入 L1", prompt)
         self.assertNotIn("Non-Goals", prompt)
 
@@ -140,10 +148,12 @@ class RuntimeDriverSchemaTests(unittest.TestCase):
 
         self.assertIn("technical-design.md", prompt)
         self.assertIn("Simplified Chinese", prompt)
-        self.assertIn("Do not edit repository source code", prompt)
-        self.assertIn("Prefer Mermaid flowcharts", prompt)
-        self.assertIn("Markdown tables", prompt)
-        self.assertIn("Avoid bullet lists", prompt)
+        self.assertIn("Do not edit source code", prompt)
+        self.assertIn("If a material design choice is unresolved", prompt)
+        self.assertIn("focused questions in artifact_content", prompt)
+        self.assertIn("return status `blocked`", prompt)
+        self.assertIn("`## 方案理解复述`", prompt)
+        self.assertIn("verification plan, risks, and rollback", prompt)
 
     def test_codex_prompt_instructs_implementation_to_follow_approved_technical_design(self) -> None:
         from agent_team.execution_context import StageExecutionContext
@@ -186,6 +196,10 @@ class RuntimeDriverSchemaTests(unittest.TestCase):
         prompt = _build_codex_prompt(request)
 
         self.assertIn("approved technical design", prompt)
+        self.assertIn("implementation source of truth", prompt)
+        self.assertIn("too ambiguous to implement safely", prompt)
+        self.assertIn("server-side changes", prompt)
+        self.assertIn("frontend mini-program changes", prompt)
         self.assertIn("implementation.md in Simplified Chinese", prompt)
         self.assertIn("按已确认技术设计创建 hello.js", prompt)
 
@@ -285,7 +299,9 @@ class RuntimeDriverSchemaTests(unittest.TestCase):
         artifact = _dry_run_artifact_content("ProductDefinition", context)
 
         self.assertIn("# Product Definition Delta", artifact)
-        self.assertIn("人工修改意见", artifact)
+        self.assertIn("理解复述", artifact)
+        self.assertIn("阶段对齐更新", artifact)
+        self.assertIn("正式产品定义 delta", artifact)
         self.assertIn("在桌面生成文件", artifact)
         self.assertIn("非 L1 内容", artifact)
         self.assertNotIn("Non-Goals", artifact)
@@ -362,6 +378,186 @@ class RuntimeDriverSchemaTests(unittest.TestCase):
         self.assertEqual(envelope.stage, "ProductDefinition")
         self.assertEqual(envelope.contract_id, "contract")
         self.assertEqual(envelope.artifact_name, "product-definition-delta.md")
+
+    def test_codex_exec_repairs_output_protocol_error_once(self) -> None:
+        from agent_team.execution_context import StageExecutionContext
+        from agent_team.models import StageContract
+        from agent_team.runtime_driver import CodexExecStageExecutor, RuntimeDriverOptions, StageExecutionRequest
+
+        commands = []
+
+        def fake_run(command, *, cwd, capture_output, text, timeout, check, env=None, stdin=None):
+            commands.append(command)
+            output_path = Path(command[command.index("-o") + 1])
+            if len(commands) == 1:
+                output_path.write_text(
+                    json.dumps(
+                        {
+                            "stage": "ProductDefinition",
+                            "status": "completed",
+                            "artifact_content": "# Product Definition Delta\n",
+                            "journal": "",
+                            "findings": [],
+                            "evidence": [],
+                            "suggested_next_owner": "",
+                            "summary": "bad envelope",
+                            "acceptance_status": "",
+                            "blocked_reason": "",
+                        }
+                    )
+                )
+            else:
+                output_path.write_text(
+                    json.dumps(
+                        {
+                            "status": "completed",
+                            "artifact_content": "# Product Definition Delta\n",
+                            "journal": "",
+                            "findings": [],
+                            "evidence": [],
+                            "suggested_next_owner": "",
+                            "summary": "repaired envelope",
+                            "acceptance_status": "",
+                            "blocked_reason": "",
+                        }
+                    )
+                )
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+        with TemporaryDirectory(dir=local_temp_dir()) as temp_dir:
+            root = Path(temp_dir)
+            request = StageExecutionRequest(
+                repo_root=root,
+                state_store=None,
+                session_id="session",
+                run_id="product-definition-run-1",
+                contract=StageContract(
+                    session_id="session",
+                    stage="ProductDefinition",
+                    goal="Write an L1 delta.",
+                    contract_id="contract",
+                    required_outputs=["product-definition-delta.md"],
+                ),
+                context=StageExecutionContext(
+                    session_id="session",
+                    stage="ProductDefinition",
+                    round_index=1,
+                    context_id="context",
+                    contract_id="contract",
+                    original_request_summary="写个js文件，并打印hello world",
+                    approved_product_definition_summary="",
+                    acceptance_matrix=[],
+                    constraints=[],
+                    required_outputs=["product-definition-delta.md"],
+                    required_evidence=[],
+                    relevant_artifacts=[],
+                ),
+                contract_path=root / "contract.json",
+                context_path=root / "context.json",
+                result_path=root / "result.json",
+                output_schema_path=root / "schema.json",
+                prompt_path=root / "prompt.md",
+                stdout_path=root / "stdout.txt",
+                stderr_path=root / "stderr.txt",
+            )
+
+            with patch("agent_team.runtime_driver.subprocess.run", fake_run):
+                envelope = CodexExecStageExecutor(RuntimeDriverOptions()).execute(request)
+
+        self.assertEqual(len(commands), 2)
+        self.assertIn("<agent_team_output_repair", commands[1][-1])
+        self.assertIn("runtime-controlled fields", commands[1][-1])
+        self.assertEqual(envelope.status, "completed")
+        self.assertEqual(envelope.summary, "repaired envelope")
+        self.assertEqual(envelope.stage, "ProductDefinition")
+
+    def test_codex_exec_repairs_output_protocol_error_twice_before_blocking_user(self) -> None:
+        from agent_team.execution_context import StageExecutionContext
+        from agent_team.models import StageContract
+        from agent_team.runtime_driver import CodexExecStageExecutor, RuntimeDriverOptions, StageExecutionRequest
+
+        commands = []
+
+        def fake_run(command, *, cwd, capture_output, text, timeout, check, env=None, stdin=None):
+            commands.append(command)
+            output_path = Path(command[command.index("-o") + 1])
+            if len(commands) < 3:
+                output_path.write_text(
+                    json.dumps(
+                        {
+                            "stage": "ProductDefinition",
+                            "status": "completed",
+                            "artifact_content": "# Product Definition Delta\n",
+                            "journal": "",
+                            "findings": [],
+                            "evidence": [],
+                            "summary": "still bad",
+                        }
+                    )
+                )
+            else:
+                output_path.write_text(
+                    json.dumps(
+                        {
+                            "status": "completed",
+                            "artifact_content": "# Product Definition Delta\n",
+                            "journal": "",
+                            "findings": [],
+                            "evidence": [],
+                            "suggested_next_owner": "",
+                            "summary": "repaired on second attempt",
+                            "acceptance_status": "",
+                            "blocked_reason": "",
+                        }
+                    )
+                )
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+        with TemporaryDirectory(dir=local_temp_dir()) as temp_dir:
+            root = Path(temp_dir)
+            request = StageExecutionRequest(
+                repo_root=root,
+                state_store=None,
+                session_id="session",
+                run_id="product-definition-run-1",
+                contract=StageContract(
+                    session_id="session",
+                    stage="ProductDefinition",
+                    goal="Write an L1 delta.",
+                    contract_id="contract",
+                    required_outputs=["product-definition-delta.md"],
+                ),
+                context=StageExecutionContext(
+                    session_id="session",
+                    stage="ProductDefinition",
+                    round_index=1,
+                    context_id="context",
+                    contract_id="contract",
+                    original_request_summary="写个js文件，并打印hello world",
+                    approved_product_definition_summary="",
+                    acceptance_matrix=[],
+                    constraints=[],
+                    required_outputs=["product-definition-delta.md"],
+                    required_evidence=[],
+                    relevant_artifacts=[],
+                ),
+                contract_path=root / "contract.json",
+                context_path=root / "context.json",
+                result_path=root / "result.json",
+                output_schema_path=root / "schema.json",
+                prompt_path=root / "prompt.md",
+                stdout_path=root / "stdout.txt",
+                stderr_path=root / "stderr.txt",
+            )
+
+            with patch("agent_team.runtime_driver.subprocess.run", fake_run):
+                envelope = CodexExecStageExecutor(RuntimeDriverOptions()).execute(request)
+
+        self.assertEqual(len(commands), 3)
+        self.assertIn("result-repair-1.json", str(commands[1]))
+        self.assertIn("result-repair-2.json", str(commands[2]))
+        self.assertEqual(envelope.status, "completed")
+        self.assertEqual(envelope.summary, "repaired on second attempt")
 
     def test_stage_payload_parser_rejects_runtime_control_fields(self) -> None:
         from agent_team.runtime_driver import _stage_result_from_json_text

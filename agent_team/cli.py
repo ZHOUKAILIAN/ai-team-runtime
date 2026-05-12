@@ -26,6 +26,12 @@ from .workflow import (
     artifact_key_for,
 )
 from .workspace_metadata import refresh_workspace_metadata
+from .worktree_sessions import (
+    create_task_worktree,
+    find_session_index_entry,
+    git_stdout,
+    upsert_session_index_entry,
+)
 
 
 RUN_REQUIREMENT_STAGE_ORDER = WORKFLOW_STAGES
@@ -63,15 +69,15 @@ RUN_REQUIREMENT_STAGE_ACTIVITY_STEPS = {
     "SessionHandoff": ("读取最终状态", "整理下一步", "保留本地现场", "标记未决项", "写接力文档"),
 }
 RUN_REQUIREMENT_TRACE_STEP_LABELS = {
-    "contract_built": "生成阶段契约",
-    "execution_context_built": "收集阶段上下文",
-    "stage_run_acquired": "准备执行环境",
-    "executor_started": "执行阶段任务",
-    "executor_completed": "读取执行结果",
-    "worktree_changes_detected": "记录工作树改动",
-    "result_submitted": "提交阶段产物",
-    "gate_evaluated": "执行质量门禁",
-    "state_advanced": "更新流程状态",
+    "contract_built": "准备上下文",
+    "execution_context_built": "准备上下文",
+    "stage_run_acquired": "准备上下文",
+    "executor_started": "执行角色",
+    "executor_completed": "执行角色",
+    "worktree_changes_detected": "收集改动",
+    "result_submitted": "提交产物",
+    "gate_evaluated": "门禁流转",
+    "state_advanced": "门禁流转",
 }
 RUN_REQUIREMENT_SPINNER_FRAMES = ("◐", "◓", "◑", "◒")
 RUN_REQUIREMENT_WAIT_TO_STAGE = {
@@ -103,10 +109,73 @@ class RunRequirementMenuChoice:
     aliases: tuple[str, ...] = ()
 
 
+def _prepare_new_run_workspace(args: argparse.Namespace, *, message: str) -> tuple[str, str]:
+    if args.state_root_explicit or args.session_id:
+        return "", ""
+    try:
+        worktree = create_task_worktree(project_root=args.project_root, message=message)
+    except RuntimeError as exc:
+        raise SystemExit(str(exc)) from exc
+    args.repo_root = worktree.path
+    args.state_root = default_state_root(repo_root=worktree.path).resolve()
+    refresh_workspace_metadata(state_root=args.state_root, repo_root=args.repo_root)
+    print(f"worktree_path: {worktree.path}")
+    print(f"branch: {worktree.branch}")
+    return worktree.base_branch, worktree.base_head
+
+
+def _resolve_continue_workspace(args: argparse.Namespace) -> tuple[str, str]:
+    requested_session_id = getattr(args, "session_id", "") or ""
+    entry = find_session_index_entry(args.project_root, requested_session_id)
+    if entry is None:
+        if requested_session_id:
+            return "", requested_session_id
+        store = StateStore(args.state_root)
+        fallback_session_id = store.latest_session_id()
+        if not fallback_session_id:
+            raise SystemExit("No unfinished Agent Team session found to continue.")
+        return "", fallback_session_id
+
+    worktree_path = Path(str(entry.get("worktree_path") or ""))
+    state_root = Path(str(entry.get("state_root") or ""))
+    session_id = str(entry.get("session_id") or requested_session_id)
+    if not worktree_path.exists():
+        raise SystemExit(f"Recorded worktree does not exist: {worktree_path}")
+    args.repo_root = worktree_path.resolve()
+    args.state_root = state_root.resolve() if state_root else default_state_root(repo_root=args.repo_root).resolve()
+    refresh_workspace_metadata(state_root=args.state_root, repo_root=args.repo_root)
+    return str(entry.get("request") or ""), session_id
+
+
+def _record_run_index_result(
+    *,
+    args: argparse.Namespace,
+    result,
+    request: str = "",
+    base_branch: str = "",
+    base_head: str = "",
+) -> None:
+    branch = git_stdout(args.repo_root, ["branch", "--show-current"])
+    upsert_session_index_entry(
+        project_root=args.project_root,
+        session_id=result.session_id,
+        worktree_path=args.repo_root,
+        state_root=args.state_root,
+        branch=branch,
+        base_branch=base_branch,
+        base_head=base_head,
+        request=request,
+        status=result.status,
+        current_state=result.current_state,
+        current_stage=result.current_stage,
+    )
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(_normalize_command_aliases(sys.argv[1:] if argv is None else argv))
     args.repo_root = args.repo_root.resolve()
+    args.project_root = args.repo_root
+    args.state_root_explicit = args.state_root is not None
     args.state_root = (
         args.state_root.resolve()
         if args.state_root is not None
@@ -131,6 +200,13 @@ def _normalize_command_aliases(argv: list[str]) -> list[str]:
             continue
         if token == "run-requirement":
             normalized[index] = "run"
+            break
+        if token == "continue":
+            normalized[index] = "run"
+            normalized.insert(index + 1, "--continue")
+            maybe_session_index = index + 2
+            if maybe_session_index < len(normalized) and not normalized[maybe_session_index].startswith("-"):
+                normalized.insert(maybe_session_index, "--session-id")
             break
         if not token.startswith("-"):
             break
@@ -215,6 +291,12 @@ def build_parser() -> argparse.ArgumentParser:
     run_requirement_target = run_requirement_parser.add_mutually_exclusive_group(required=False)
     run_requirement_target.add_argument("--message", help="Raw user message for a new requirement session.")
     run_requirement_target.add_argument("--session-id", help="Existing session ID to continue driving.")
+    run_requirement_parser.add_argument(
+        "--continue",
+        dest="continue_run",
+        action="store_true",
+        help="Continue the latest unfinished task worktree, or --session-id when provided.",
+    )
     run_requirement_parser.add_argument(
         "--executor",
         choices=["codex-exec", "command", "dry-run"],
@@ -548,8 +630,18 @@ def _handle_run_requirement(args: argparse.Namespace) -> int:
 
     interactive = _run_requirement_should_be_interactive(args)
     message, session_id = _resolve_run_requirement_target(args, interactive=interactive)
+    base_branch = ""
+    base_head = ""
+    if message and not session_id and not getattr(args, "continue_run", False):
+        base_branch, base_head = _prepare_new_run_workspace(args, message=message)
     if interactive:
-        return _handle_run_requirement_interactive(args, message=message, session_id=session_id)
+        return _handle_run_requirement_interactive(
+            args,
+            message=message,
+            session_id=session_id,
+            base_branch=base_branch,
+            base_head=base_head,
+        )
 
     try:
         result = run_requirement(
@@ -562,6 +654,13 @@ def _handle_run_requirement(args: argparse.Namespace) -> int:
     except RuntimeDriverError as exc:
         raise SystemExit(str(exc))
 
+    _record_run_index_result(
+        args=args,
+        result=result,
+        request=message,
+        base_branch=base_branch,
+        base_head=base_head,
+    )
     _print_runtime_driver_result(result)
     if args.model_output != "off":
         store = StateStore(args.state_root)
@@ -627,6 +726,10 @@ def _run_requirement_should_be_interactive(args: argparse.Namespace) -> bool:
 def _resolve_run_requirement_target(args: argparse.Namespace, *, interactive: bool) -> tuple[str, str]:
     if args.message and args.session_id:
         raise SystemExit("Provide either --message or --session-id, not both.")
+    if getattr(args, "continue_run", False):
+        if args.message:
+            raise SystemExit("continue does not accept --message; use run --message for a new task.")
+        return _resolve_continue_workspace(args)
     if args.message:
         return args.message, args.session_id or ""
     if args.session_id:
@@ -639,7 +742,14 @@ def _resolve_run_requirement_target(args: argparse.Namespace, *, interactive: bo
     raise SystemExit("run requires --message or --session-id when stdin/stdout are not interactive.")
 
 
-def _handle_run_requirement_interactive(args: argparse.Namespace, *, message: str, session_id: str) -> int:
+def _handle_run_requirement_interactive(
+    args: argparse.Namespace,
+    *,
+    message: str,
+    session_id: str,
+    base_branch: str = "",
+    base_head: str = "",
+) -> int:
     from .runtime_driver import RuntimeDriverError, run_requirement
 
     store = StateStore(args.state_root)
@@ -692,6 +802,14 @@ def _handle_run_requirement_interactive(args: argparse.Namespace, *, message: st
                 result = run_stage()
         except RuntimeDriverError as exc:
             raise SystemExit(str(exc))
+
+        _record_run_index_result(
+            args=args,
+            result=result,
+            request=current_message,
+            base_branch=base_branch,
+            base_head=base_head,
+        )
 
         if not header_printed:
             print(f"session_id: {result.session_id}")
@@ -937,7 +1055,7 @@ def _print_run_requirement_stage_report(
     if result.status == "done":
         print("流程已完成。")
     elif result.status in {"blocked", "failed"}:
-        print("请检查 gate_reason、stage_run trace 和阶段产物后修复。")
+        print(_run_requirement_blocked_next_step_text(stage))
     elif auto_approving:
         print(_run_requirement_auto_next_step_text(stage))
     else:
@@ -1076,14 +1194,22 @@ def _run_requirement_stage_summary_lines(
 
 def _run_requirement_next_step_text(stage: str) -> str:
     if stage == "ProductDefinition":
-        return "请打开 L1 delta 文档确认哪些进入产品定义，哪些不是 L1。"
+        return "请打开 L1 delta 文档确认理解复述、澄清问题，以及哪些进入产品定义、哪些不是 L1。"
     if stage == "TechnicalDesign":
-        return "请打开技术设计文档确认实现路径和验证方式是否通过。"
+        return "请打开技术设计文档确认方案理解复述、待确认问题、实现路径和验证方式是否通过。"
     if stage == "SessionHandoff":
         return "请打开接力文档并确认最终决策。"
     if stage == "Acceptance":
         return "请打开验收报告确认 AI 最终建议。"
     return "请确认当前阶段是否通过。"
+
+
+def _run_requirement_blocked_next_step_text(stage: str) -> str:
+    if stage == "ProductDefinition":
+        return "需求未对齐：请打开 product-definition-delta.md 查看澄清问题，在回复中补充答案后重新执行当前阶段。"
+    if stage == "TechnicalDesign":
+        return "方案未对齐：请打开 technical-design.md 查看待确认问题，在回复中补充答案后重新执行当前阶段。"
+    return "请检查 gate_reason、stage_run trace 和阶段产物后修复。"
 
 
 def _run_requirement_auto_next_step_text(stage: str) -> str:
@@ -1114,6 +1240,8 @@ def _prompt_run_requirement_blocked_decision(
     ]
     while True:
         print("当前阶段执行被阻塞。")
+        print(_run_requirement_blocked_next_step_text(stage))
+        _print_run_requirement_document_link(store=store, summary=summary, stage=stage)
         _print_run_requirement_menu(choices)
         choice = _read_run_requirement_menu_choice(choices)
         if choice.action == "retry":

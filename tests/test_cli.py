@@ -314,8 +314,8 @@ class CliTests(unittest.TestCase):
         self.assertIn("Route · 读取需求", first_line)
         self.assertIn("Route · 识别层级", second_line)
         self.assertIn(
-            "Technical Design · 生成阶段契约",
-            _render_running_progress_line(stage="TechnicalDesign", completed=3, phase=0, activity="生成阶段契约"),
+            "Technical Design · 准备上下文",
+            _render_running_progress_line(stage="TechnicalDesign", completed=3, phase=0, activity="准备上下文"),
         )
 
     def test_run_requirement_animation_wraps_interactive_stage_line(self) -> None:
@@ -486,6 +486,16 @@ class CliTests(unittest.TestCase):
             self.assertIn("当前阶段执行被阻塞", output)
             self.assertIn("诊断信息:", output)
             self.assertIn("Session saved.", output)
+
+    def test_blocked_next_step_points_users_to_alignment_questions(self) -> None:
+        from agent_team.cli import _run_requirement_blocked_next_step_text, _run_requirement_next_step_text
+
+        self.assertIn("product-definition-delta.md", _run_requirement_blocked_next_step_text("ProductDefinition"))
+        self.assertIn("澄清问题", _run_requirement_blocked_next_step_text("ProductDefinition"))
+        self.assertIn("technical-design.md", _run_requirement_blocked_next_step_text("TechnicalDesign"))
+        self.assertIn("待确认问题", _run_requirement_blocked_next_step_text("TechnicalDesign"))
+        self.assertIn("澄清问题", _run_requirement_next_step_text("ProductDefinition"))
+        self.assertIn("待确认问题", _run_requirement_next_step_text("TechnicalDesign"))
 
     def test_run_requirement_dry_run_stops_at_technical_design_gate_after_product_definition_go(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
@@ -1097,6 +1107,75 @@ class CliTests(unittest.TestCase):
             self.assertIn("current_state: Implementation", result.stdout)
             self.assertIn("current_stage: Implementation", result.stdout)
             self.assertIn("human_decision: rework", result.stdout)
+
+
+    def test_run_defaults_to_new_isolated_worktree_and_continue_reuses_it(self) -> None:
+        from agent_team.cli import main
+
+        with TemporaryDirectory(dir=local_temp_dir()) as temp_dir:
+            repo_root = Path(temp_dir) / "repo"
+            repo_root.mkdir()
+            subprocess.run(["git", "init"], cwd=repo_root, capture_output=True, text=True, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo_root, check=True)
+            subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo_root, check=True)
+            (repo_root / "README.md").write_text("# test repo\n")
+            subprocess.run(["git", "add", "README.md"], cwd=repo_root, capture_output=True, text=True, check=True)
+            subprocess.run(["git", "commit", "-m", "initial"], cwd=repo_root, capture_output=True, text=True, check=True)
+
+            stdout = io.StringIO()
+            with patch("sys.stdout", stdout):
+                exit_code = main(
+                    [
+                        "--repo-root",
+                        str(repo_root),
+                        "run",
+                        "--message",
+                        "新增 登录 按钮",
+                        "--executor",
+                        "dry-run",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            output = stdout.getvalue()
+            self.assertIn("worktree_path:", output)
+            self.assertIn("branch: agent-team/", output)
+            self.assertIn("新增-登录-按钮", output)
+            session_id = _session_id_from_stdout(output)
+
+            index_path = repo_root / ".agent-team" / "session-index.json"
+            index_payload = json.loads(index_path.read_text())
+            entry = index_payload["sessions"][0]
+            self.assertEqual(entry["session_id"], session_id)
+            self.assertIn("新增-登录-按钮", entry["branch"])
+            worktree_path = Path(entry["worktree_path"])
+            self.assertTrue(worktree_path.exists())
+            self.assertTrue((worktree_path / ".agent-team" / session_id / "product-definition-delta.md").exists())
+
+            continue_stdout = io.StringIO()
+            with patch("sys.stdout", continue_stdout):
+                continue_exit_code = main(
+                    [
+                        "--repo-root",
+                        str(repo_root),
+                        "continue",
+                        "--executor",
+                        "dry-run",
+                    ]
+                )
+
+            self.assertEqual(continue_exit_code, 0)
+            continue_output = continue_stdout.getvalue()
+            self.assertIn(f"session_id: {session_id}", continue_output)
+            self.assertEqual(len(list((repo_root / ".worktrees").iterdir())), 1)
+
+    def test_continue_accepts_session_id_positional_alias(self) -> None:
+        from agent_team.cli import _normalize_command_aliases
+
+        self.assertEqual(
+            _normalize_command_aliases(["--repo-root", "/tmp/repo", "continue", "abc123", "--executor", "dry-run"]),
+            ["--repo-root", "/tmp/repo", "run", "--continue", "--session-id", "abc123", "--executor", "dry-run"],
+        )
 
 
 if __name__ == "__main__":
