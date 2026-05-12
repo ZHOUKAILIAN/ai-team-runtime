@@ -215,8 +215,9 @@ def _normalize_command_aliases(argv: list[str]) -> list[str]:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    executable_name = Path(sys.argv[0]).name
     parser = argparse.ArgumentParser(
-        prog="agent-team",
+        prog="agt" if executable_name == "agt" else "agent-team",
         description="Agent Team single-session workflow CLI.",
     )
     parser.add_argument("--repo-root", type=Path, default=Path("."))
@@ -291,6 +292,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_requirement_target = run_requirement_parser.add_mutually_exclusive_group(required=False)
     run_requirement_target.add_argument("--message", help="Raw user message for a new requirement session.")
     run_requirement_target.add_argument("--session-id", help="Existing session ID to continue driving.")
+    run_requirement_parser.add_argument("message_arg", nargs="?", help="Raw user message for a new requirement session.")
     run_requirement_parser.add_argument(
         "--continue",
         dest="continue_run",
@@ -506,6 +508,37 @@ def build_parser() -> argparse.ArgumentParser:
         help="Also route the waiting workflow back to the target stage as a human rework decision.",
     )
     feedback_parser.set_defaults(handler=_handle_record_feedback)
+
+    approve_parser = subparsers.add_parser("approve", help="Approve the latest or selected waiting workflow session.")
+    approve_parser.add_argument("session_id_arg", nargs="?", help="Optional session ID to approve.")
+    approve_parser.add_argument("--session-id", dest="session_id", help="Specific session ID to approve.")
+    approve_parser.set_defaults(handler=_handle_approve)
+
+    reject_parser = subparsers.add_parser("reject", help="Reject the latest or selected waiting workflow session.")
+    reject_parser.add_argument("session_id_arg", nargs="?", help="Optional session ID to reject.")
+    reject_parser.add_argument("--session-id", dest="session_id", help="Specific session ID to reject.")
+    reject_parser.set_defaults(handler=_handle_reject)
+
+    rework_parser = subparsers.add_parser("rework", help="Route the latest or selected workflow session back to a stage.")
+    rework_parser.add_argument("target_stage", choices=list(STAGES), help="Stage to rework from.")
+    rework_parser.add_argument("--session-id", help="Specific session ID to rework.")
+    rework_parser.set_defaults(handler=_handle_rework)
+
+    friendly_feedback_parser = subparsers.add_parser("feedback", help="Record concise feedback for a stage, optionally applying rework.")
+    friendly_feedback_parser.add_argument("stage", choices=list(STAGES), help="Stage that should learn from or fix the issue.")
+    friendly_feedback_parser.add_argument("issue", help="Issue summary.")
+    friendly_feedback_parser.add_argument("--session-id", help="Specific session ID. Defaults to the latest session.")
+    friendly_feedback_parser.add_argument("--source-stage", default="", help="Stage where the feedback originated. Defaults to the current stage.")
+    friendly_feedback_parser.add_argument("--severity", default="medium", help="Feedback severity.")
+    friendly_feedback_parser.add_argument("--lesson", default="", help="Reusable lesson to store.")
+    friendly_feedback_parser.add_argument("--context-update", default="", help="Context rule to store.")
+    friendly_feedback_parser.add_argument("--contract-update", default="", help="Contract rule to store.")
+    friendly_feedback_parser.add_argument("--evidence", default="", help="Optional evidence summary.")
+    friendly_feedback_parser.add_argument("--evidence-kind", default="", help="Evidence source classification.")
+    friendly_feedback_parser.add_argument("--required-evidence", action="append", default=[], help="Evidence required before closure. Repeat for multiple values.")
+    friendly_feedback_parser.add_argument("--completion-signal", default="", help="Explicit closure signal for the learning overlay.")
+    friendly_feedback_parser.add_argument("--rework", action="store_true", help="Also route the workflow back to the feedback stage.")
+    friendly_feedback_parser.set_defaults(handler=_handle_feedback)
 
     review_parser = subparsers.add_parser("review", help="Print the latest or a selected review.")
     review_parser.add_argument("--session-id", help="Specific session ID to inspect.")
@@ -724,14 +757,17 @@ def _run_requirement_should_be_interactive(args: argparse.Namespace) -> bool:
 
 
 def _resolve_run_requirement_target(args: argparse.Namespace, *, interactive: bool) -> tuple[str, str]:
+    message_arg = getattr(args, "message_arg", "") or ""
     if args.message and args.session_id:
         raise SystemExit("Provide either --message or --session-id, not both.")
+    if message_arg and (args.message or args.session_id or getattr(args, "continue_run", False)):
+        raise SystemExit("Provide the requirement either positionally or with --message, not both.")
     if getattr(args, "continue_run", False):
         if args.message:
             raise SystemExit("continue does not accept --message; use run --message for a new task.")
         return _resolve_continue_workspace(args)
-    if args.message:
-        return args.message, args.session_id or ""
+    if args.message or message_arg:
+        return args.message or message_arg, args.session_id or ""
     if args.session_id:
         return "", args.session_id
     if interactive:
@@ -1872,6 +1908,57 @@ def _resolve_openai_oa_header(args: argparse.Namespace) -> str:
     return args.openai_oa or args.openai_user_agent
 
 
+
+def _resolve_session_id_arg(args: argparse.Namespace) -> str:
+    explicit_session_id = getattr(args, "session_id", "") or ""
+    positional_session_id = getattr(args, "session_id_arg", "") or ""
+    if explicit_session_id and positional_session_id:
+        raise SystemExit("Provide session ID either positionally or with --session-id, not both.")
+    session_id = explicit_session_id or positional_session_id
+    if session_id:
+        return session_id
+    store = StateStore(args.state_root)
+    session_id = store.latest_session_id()
+    if not session_id:
+        raise SystemExit("No workflow session exists yet. Provide --session-id or start with run.")
+    return session_id
+
+
+def _handle_approve(args: argparse.Namespace) -> int:
+    args.session_id = _resolve_session_id_arg(args)
+    args.decision = "go"
+    args.target_stage = ""
+    return _handle_record_human_decision(args)
+
+
+def _handle_reject(args: argparse.Namespace) -> int:
+    args.session_id = _resolve_session_id_arg(args)
+    args.decision = "no-go"
+    args.target_stage = ""
+    return _handle_record_human_decision(args)
+
+
+def _handle_rework(args: argparse.Namespace) -> int:
+    args.session_id = _resolve_session_id_arg(args)
+    args.decision = "rework"
+    return _handle_record_human_decision(args)
+
+
+def _handle_feedback(args: argparse.Namespace) -> int:
+    args.session_id = _resolve_session_id_arg(args)
+    args.target_stage = args.stage
+    args.source_stage = args.source_stage or _feedback_default_source_stage(args)
+    args.issue = args.issue
+    args.apply_rework = bool(args.rework)
+    return _handle_record_feedback(args)
+
+
+def _feedback_default_source_stage(args: argparse.Namespace) -> str:
+    store = StateStore(args.state_root)
+    summary = store.load_workflow_summary(args.session_id)
+    return summary.current_stage or args.stage
+
+
 def _handle_record_human_decision(args: argparse.Namespace) -> int:
     store = StateStore(args.state_root)
     session = store.load_session(args.session_id)
@@ -2017,7 +2104,7 @@ def _handle_status(args: argparse.Namespace) -> int:
         summary = store.load_workflow_summary(session_id)
         _print_summary(summary)
         if summary.current_state in WAIT_STATES:
-            print("next_action: record-human-decision")
+            print("next_action: approve|rework|reject")
             return 0
         active_run = store.active_stage_run(session_id)
         if active_run is not None:

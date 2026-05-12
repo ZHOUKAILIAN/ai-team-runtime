@@ -15,6 +15,7 @@ test = ["pytest", "httpx"]
 
 [project.scripts]
 agent-team = "agent_team.cli:main"
+agt = "agent_team.cli:main"
 
 [build-system]
 requires = ["setuptools>=68"]

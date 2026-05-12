@@ -42,6 +42,14 @@ class CliTests(unittest.TestCase):
         self.assertIn("status", result.stdout)
         self.assertNotIn("agent-run", result.stdout)
 
+    def test_project_scripts_include_short_agt_alias(self) -> None:
+        pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+
+        payload = pyproject.read_text()
+
+        self.assertIn('agent-team = "agent_team.cli:main"', payload)
+        self.assertIn('agt = "agent_team.cli:main"', payload)
+
     def test_legacy_run_requirement_alias_still_opens_run_help(self) -> None:
         result = subprocess.run(
             [sys.executable, "-m", "agent_team", "run-requirement", "--help"],
@@ -260,7 +268,7 @@ class CliTests(unittest.TestCase):
             self.assertIn("runtime_driver_status: waiting_human", result.stdout)
             self.assertIn("current_state: WaitForProductDefinitionApproval", result.stdout)
             self.assertIn("current_stage: ProductDefinition", result.stdout)
-            self.assertIn("next_action: record-human-decision --decision go", result.stdout)
+            self.assertIn("next_action: approve", result.stdout)
             session_id = _session_id_from_stdout(result.stdout)
             session_dir = Path(temp_dir) / session_id
             runtime_session_dir = Path(temp_dir) / "_runtime" / "sessions" / session_id
@@ -496,6 +504,77 @@ class CliTests(unittest.TestCase):
         self.assertIn("待确认问题", _run_requirement_blocked_next_step_text("TechnicalDesign"))
         self.assertIn("澄清问题", _run_requirement_next_step_text("ProductDefinition"))
         self.assertIn("待确认问题", _run_requirement_next_step_text("TechnicalDesign"))
+
+    def test_run_accepts_positional_requirement_message(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+
+        with TemporaryDirectory(dir=local_temp_dir()) as temp_dir:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "agent_team",
+                    "--repo-root",
+                    str(repo_root),
+                    "--state-root",
+                    temp_dir,
+                    "run",
+                    "执行这个需求：支持短命令入口",
+                    "--executor",
+                    "dry-run",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("runtime_driver_status: waiting_human", result.stdout)
+            self.assertIn("next_action: approve", result.stdout)
+
+    def test_approve_uses_latest_session_by_default(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+
+        with TemporaryDirectory(dir=local_temp_dir()) as temp_dir:
+            run_result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "agent_team",
+                    "--repo-root",
+                    str(repo_root),
+                    "--state-root",
+                    temp_dir,
+                    "run",
+                    "执行这个需求：测试 approve",
+                    "--executor",
+                    "dry-run",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(run_result.returncode, 0, run_result.stderr)
+
+            approve = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "agent_team",
+                    "--repo-root",
+                    str(repo_root),
+                    "--state-root",
+                    temp_dir,
+                    "approve",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(approve.returncode, 0, approve.stderr)
+            self.assertIn("current_state: ProjectRuntime", approve.stdout)
+            self.assertIn("human_decision: go", approve.stdout)
 
     def test_run_requirement_dry_run_stops_at_technical_design_gate_after_product_definition_go(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
@@ -1107,6 +1186,67 @@ class CliTests(unittest.TestCase):
             self.assertIn("current_state: Implementation", result.stdout)
             self.assertIn("current_stage: Implementation", result.stdout)
             self.assertIn("human_decision: rework", result.stdout)
+
+
+    def test_friendly_feedback_can_apply_rework_decision(self) -> None:
+        from agent_team.models import WorkflowSummary
+        from agent_team.state import StateStore
+
+        repo_root = Path(__file__).resolve().parents[1]
+
+        with TemporaryDirectory(dir=local_temp_dir()) as temp_dir:
+            store = StateStore(Path(temp_dir))
+            session = store.create_session("做一个支持简短反馈命令的流程")
+            store.save_workflow_summary(
+                session,
+                WorkflowSummary(
+                    session_id=session.session_id,
+                    runtime_mode="session_bootstrap",
+                    current_state="WaitForHumanDecision",
+                    current_stage="SessionHandoff",
+                    stage_statuses={
+                        "ProductDefinition": "approved",
+                        "Implementation": "completed",
+                        "Verification": "passed",
+                    },
+                    acceptance_status="recommended_go",
+                    human_decision="pending",
+                    artifact_paths={"workflow_summary": str(store.workflow_summary_path(session.session_id))},
+                ),
+            )
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "agent_team",
+                    "--repo-root",
+                    str(repo_root),
+                    "--state-root",
+                    temp_dir,
+                    "feedback",
+                    "Implementation",
+                    "服务端改动缺少 API 到数据库的端到端验证",
+                    "--session-id",
+                    session.session_id,
+                    "--lesson",
+                    "服务端改动必须提供接口到数据的证据",
+                    "--required-evidence",
+                    "API response",
+                    "--required-evidence",
+                    "database query result",
+                    "--rework",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("recorded_feedback:", result.stdout)
+            self.assertIn("current_state: Implementation", result.stdout)
+            self.assertIn("human_decision: rework", result.stdout)
+
 
 
     def test_run_defaults_to_new_isolated_worktree_and_continue_reuses_it(self) -> None:

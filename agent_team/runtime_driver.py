@@ -530,12 +530,12 @@ def _handle_wait_state(
     del repo_root
     if summary.current_state == "WaitForProductDefinitionApproval":
         if summary.runtime_mode == "runtime_driver_interactive":
-            return ("waiting_human", "record-human-decision --decision go|rework|no-go")
-        return ("waiting_human", "record-human-decision --decision go")
+            return ("waiting_human", "approve|rework|reject")
+        return ("waiting_human", "approve")
     if summary.current_state == "WaitForTechnicalDesignApproval":
-        return ("waiting_human", "record-human-decision --decision go|rework|no-go")
+        return ("waiting_human", "approve|rework|reject")
     if summary.current_state == "WaitForHumanDecision":
-        return ("waiting_human", "record-human-decision --decision go|no-go|rework")
+        return ("waiting_human", "approve|no-go|rework")
     if summary.current_state == "Blocked":
         return ("blocked", "inspect gate_reason and route rework")
     return None
