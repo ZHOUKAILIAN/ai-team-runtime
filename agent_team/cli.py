@@ -110,6 +110,13 @@ class RunRequirementMenuChoice:
     aliases: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True, slots=True)
+class RunRequirementBlockedSummary:
+    errors: list[str]
+    issues: list[str]
+    blockers: list[str]
+
+
 def _prepare_new_run_workspace(args: argparse.Namespace, *, message: str) -> tuple[str, str]:
     if args.state_root_explicit or args.session_id:
         return "", ""
@@ -708,6 +715,13 @@ def _handle_run_requirement(args: argparse.Namespace) -> int:
     if args.model_output != "off":
         store = StateStore(args.state_root)
         summary = store.load_workflow_summary(result.session_id)
+        if result.status in {"blocked", "failed"}:
+            _print_run_requirement_blocked_summary(
+                store=store,
+                session_id=result.session_id,
+                stage=_run_requirement_stage_for_summary(summary),
+                result=result,
+            )
         _print_run_requirement_worktree_changes(
             store=store,
             session_id=result.session_id,
@@ -1097,6 +1111,8 @@ def _print_run_requirement_stage_report(
         _print_run_requirement_raw_streams(store=store, session_id=session_id, stage=stage)
     if result.gate_reason and model_output != "raw":
         print(f"gate_reason: {result.gate_reason}")
+    if result.status in {"blocked", "failed"} and model_output != "raw":
+        _print_run_requirement_blocked_summary(store=store, session_id=session_id, stage=stage, result=result)
     print("下一步:")
     if result.status == "done":
         print("流程已完成。")
@@ -1255,7 +1271,7 @@ def _run_requirement_blocked_next_step_text(stage: str) -> str:
         return "需求未对齐：请打开 product-definition-delta.md 查看澄清问题，在回复中补充答案后重新执行当前阶段。"
     if stage == "TechnicalDesign":
         return "方案未对齐：请打开 technical-design.md 查看待确认问题，在回复中补充答案后重新执行当前阶段。"
-    return "请检查 gate_reason、stage_run trace 和阶段产物后修复。"
+    return "请先处理上方“错误 / 问题 / 阻塞点”，补齐证据或修复失败项后重新执行当前阶段。"
 
 
 def _run_requirement_auto_next_step_text(stage: str) -> str:
@@ -1269,6 +1285,181 @@ def _run_requirement_auto_next_step_text(stage: str) -> str:
 
 def _run_requirement_stage_label(stage: str) -> str:
     return RUN_REQUIREMENT_STAGE_LABELS.get(stage, stage)
+
+
+def _print_run_requirement_blocked_summary(
+    *,
+    store: StateStore,
+    session_id: str,
+    stage: str,
+    result,
+) -> None:
+    summary = _run_requirement_blocked_summary(store=store, session_id=session_id, stage=stage, result=result)
+    print("阻塞诊断:")
+    _print_run_requirement_summary_section("错误", summary.errors)
+    _print_run_requirement_summary_section("问题", summary.issues)
+    _print_run_requirement_summary_section("阻塞点", summary.blockers)
+
+
+def _print_run_requirement_summary_section(title: str, lines: list[str]) -> None:
+    print(f"{title}:")
+    if not lines:
+        print("- 暂未从阶段产物中提取到更具体的信息，请打印诊断文件路径继续排查。")
+        return
+    for line in lines[:8]:
+        print(f"- {line}")
+    if len(lines) > 8:
+        print(f"- 还有 {len(lines) - 8} 项未展开，请打印诊断文件路径查看完整 stage result。")
+
+
+def _run_requirement_blocked_summary(
+    *,
+    store: StateStore,
+    session_id: str,
+    stage: str,
+    result,
+) -> RunRequirementBlockedSummary:
+    runtime_stage = _runtime_stage_for_run_requirement_stage(stage)
+    run = store.latest_stage_run(session_id, stage=runtime_stage)
+    gate_result = run.gate_result if run is not None else None
+    gate_status = str(getattr(result, "gate_status", "") or getattr(gate_result, "status", "") or "BLOCKED")
+    gate_reason = str(
+        getattr(result, "gate_reason", "")
+        or getattr(gate_result, "reason", "")
+        or (run.blocked_reason if run is not None else "")
+    ).strip()
+
+    stage_result = _load_run_requirement_stage_result(store=store, run=run)
+    findings = _run_requirement_findings(gate_result=gate_result, stage_result=stage_result)
+    evidence = _run_requirement_evidence(stage_result)
+
+    errors: list[str] = []
+    _append_unique(errors, f"{_run_requirement_stage_label(stage)} 阶段没有推进：门禁判定为 {gate_status}。")
+    if gate_reason:
+        _append_unique(errors, gate_reason)
+
+    issues: list[str] = []
+    if gate_result is not None:
+        if gate_result.missing_outputs:
+            _append_unique(issues, "缺少必需产物：" + "、".join(gate_result.missing_outputs))
+        if gate_result.missing_evidence:
+            _append_unique(issues, "缺少必需证据：" + "、".join(gate_result.missing_evidence))
+    for finding in findings:
+        issue = _finding_field(finding, "issue")
+        severity = _finding_field(finding, "severity")
+        if issue:
+            prefix = f"[{severity}] " if severity else ""
+            _append_unique(issues, prefix + issue)
+    for item in evidence:
+        exit_code = _evidence_exit_code(item)
+        if exit_code is None or exit_code == 0:
+            continue
+        summary = _evidence_field(item, "summary") or _evidence_field(item, "command")
+        if summary:
+            _append_unique(issues, f"验证命令失败（exit={exit_code}）：{summary}")
+    if not issues and gate_reason:
+        _append_unique(issues, gate_reason)
+
+    blockers: list[str] = []
+    for finding in findings:
+        for required in _finding_required_evidence(finding):
+            _append_unique(blockers, f"需要补充证据：{required}")
+        completion_signal = _finding_field(finding, "completion_signal")
+        if completion_signal:
+            _append_unique(blockers, completion_signal)
+    for item in evidence:
+        exit_code = _evidence_exit_code(item)
+        command = _evidence_field(item, "command")
+        if exit_code is not None and exit_code != 0 and command:
+            _append_unique(blockers, f"修复失败命令后重新运行：{command}")
+    if gate_result is not None:
+        for missing in gate_result.missing_outputs:
+            _append_unique(blockers, f"补齐必需产物：{missing}")
+        for missing in gate_result.missing_evidence:
+            _append_unique(blockers, f"补齐必需证据：{missing}")
+    if not blockers and gate_reason:
+        _append_unique(blockers, "按 gate_reason 补齐运行条件或修复失败项后重新执行当前阶段。")
+
+    return RunRequirementBlockedSummary(errors=errors, issues=issues, blockers=blockers)
+
+
+def _load_run_requirement_stage_result(*, store: StateStore, run) -> StageResultEnvelope | None:
+    if run is None:
+        return None
+    try:
+        return store.load_stage_run_result(run)
+    except Exception:
+        if run.stage_result:
+            try:
+                return StageResultEnvelope.from_dict(run.stage_result)
+            except Exception:
+                return None
+    return None
+
+
+def _run_requirement_findings(*, gate_result: GateResult | None, stage_result: StageResultEnvelope | None) -> list[object]:
+    findings: list[object] = []
+    if gate_result is not None:
+        findings.extend(gate_result.findings)
+    if stage_result is not None:
+        findings.extend(stage_result.findings)
+    return _unique_objects_by_text(findings, fields=("issue", "completion_signal"))
+
+
+def _run_requirement_evidence(stage_result: StageResultEnvelope | None) -> list[object]:
+    if stage_result is None:
+        return []
+    return list(stage_result.evidence)
+
+
+def _finding_field(finding: object, field_name: str) -> str:
+    if isinstance(finding, dict):
+        return str(finding.get(field_name, "") or "").strip()
+    return str(getattr(finding, field_name, "") or "").strip()
+
+
+def _finding_required_evidence(finding: object) -> list[str]:
+    if isinstance(finding, dict):
+        values = finding.get("required_evidence", [])
+    else:
+        values = getattr(finding, "required_evidence", [])
+    if not isinstance(values, list):
+        return []
+    return [str(item).strip() for item in values if str(item).strip()]
+
+
+def _evidence_field(item: object, field_name: str) -> str:
+    if isinstance(item, dict):
+        return str(item.get(field_name, "") or "").strip()
+    return str(getattr(item, field_name, "") or "").strip()
+
+
+def _evidence_exit_code(item: object) -> int | None:
+    raw_value = item.get("exit_code") if isinstance(item, dict) else getattr(item, "exit_code", None)
+    if raw_value is None:
+        return None
+    try:
+        return int(raw_value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _append_unique(lines: list[str], value: str) -> None:
+    normalized = " ".join(str(value).split())
+    if normalized and normalized not in lines:
+        lines.append(normalized)
+
+
+def _unique_objects_by_text(items: list[object], *, fields: tuple[str, ...]) -> list[object]:
+    seen: set[tuple[str, ...]] = set()
+    result: list[object] = []
+    for item in items:
+        key = tuple(_finding_field(item, field) for field in fields)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(item)
+    return result
 
 
 def _prompt_run_requirement_blocked_decision(
@@ -1286,6 +1477,12 @@ def _prompt_run_requirement_blocked_decision(
     ]
     while True:
         print("当前阶段执行被阻塞。")
+        _print_run_requirement_blocked_summary(
+            store=store,
+            session_id=result.session_id,
+            stage=stage,
+            result=result,
+        )
         print(_run_requirement_blocked_next_step_text(stage))
         _print_run_requirement_document_link(store=store, summary=summary, stage=stage)
         _print_run_requirement_menu(choices)
