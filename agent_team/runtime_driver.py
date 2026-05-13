@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from hashlib import sha256
@@ -10,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol
 
-from .codex_isolation import isolated_codex_env
+from .codex_isolation import default_codex_home, isolated_codex_env, prepare_isolated_codex_home
 from .executor_env import build_executor_env, executor_env_config_path
 from .execution_context import StageExecutionContext, build_stage_execution_context
 from .gate_evaluator import GateEvaluator, NoopJudge
@@ -63,7 +64,7 @@ class RuntimeDriverOptions:
     codex_isolate_home: bool = True
     codex_ignore_rules: bool = True
     codex_disable_plugins: bool = True
-    codex_ephemeral: bool = True
+    codex_ephemeral: bool = False
     codex_skip_git_repo_check: bool = True
     interactive: bool = False
     trace_prompts: bool = False
@@ -104,6 +105,7 @@ class StageExecutionRequest:
     stderr_path: Path | None = None
     skills: list[Skill] = field(default_factory=list)
     executor_env_config_path: Path | None = None
+    executor_metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class RuntimeDriverError(RuntimeError):
@@ -166,6 +168,153 @@ def _coerce_stream_text(value: object) -> str:
     if isinstance(value, bytes):
         return value.decode("utf-8", errors="replace")
     return str(value)
+
+
+_CODEX_SESSION_ID_RE = re.compile(r'"(?:conversation_id|session_id|id)"\s*:\s*"([^"\s]+)"')
+
+
+def _load_codex_resume_id(request: StageExecutionRequest) -> str:
+    store = getattr(request, "state_store", None)
+    if store is None:
+        return ""
+    try:
+        state = store.load_codex_exec_state(request.session_id)
+    except (AttributeError, FileNotFoundError, json.JSONDecodeError, TypeError, ValueError):
+        return ""
+    for key in ("conversation_id", "session_id", "resume_id"):
+        value = state.get(key)
+        if _looks_like_codex_session_id(value):
+            return str(value)
+    return ""
+
+
+def _save_codex_resume_id(
+    request: StageExecutionRequest,
+    conversation_id: str,
+    *,
+    codex_home: Path | None = None,
+) -> None:
+    if not _looks_like_codex_session_id(conversation_id):
+        return
+    store = getattr(request, "state_store", None)
+    if store is None:
+        return
+    state: dict[str, object] = {"conversation_id": conversation_id}
+    if codex_home is not None:
+        state["codex_home"] = str(codex_home)
+    try:
+        store.save_codex_exec_state(request.session_id, state)
+    except (AttributeError, FileNotFoundError, json.JSONDecodeError, TypeError, ValueError):
+        return
+
+
+def _codex_env_for_stage_request(request: StageExecutionRequest) -> tuple[dict[str, str], Path | None]:
+    store = getattr(request, "state_store", None)
+    if store is None:
+        return build_executor_env(config_path=request.executor_env_config_path), None
+    codex_home = store.codex_home_path(request.session_id)
+    prepare_isolated_codex_home(source_home=default_codex_home(), target_home=codex_home)
+    env = build_executor_env(config_path=request.executor_env_config_path)
+    env["CODEX_HOME"] = str(codex_home)
+    return env, codex_home
+
+
+def _extract_codex_session_id(stream_text: str) -> str:
+    latest = ""
+    for line in stream_text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            event = json.loads(stripped)
+        except json.JSONDecodeError:
+            event = None
+        event_id = _codex_session_id_from_event(event)
+        if event_id:
+            latest = event_id
+            continue
+        if "session_meta" not in stripped and "conversation_id" not in stripped and "session_id" not in stripped:
+            continue
+        for match in _CODEX_SESSION_ID_RE.finditer(stripped):
+            value = match.group(1)
+            if _looks_like_codex_session_id(value):
+                latest = value
+    return latest
+
+
+def _codex_session_id_from_event(value: object) -> str:
+    if not isinstance(value, dict):
+        return ""
+    event_type = value.get("type")
+    payload = value.get("payload")
+    if isinstance(payload, dict):
+        payload_keys = ("id", "session_id", "conversation_id") if event_type == "session_meta" else (
+            "session_id",
+            "conversation_id",
+        )
+        for key in payload_keys:
+            candidate = payload.get(key)
+            if _looks_like_codex_session_id(candidate):
+                return str(candidate)
+    if event_type == "session_meta":
+        for key in ("id", "session_id", "conversation_id"):
+            candidate = value.get(key)
+            if _looks_like_codex_session_id(candidate):
+                return str(candidate)
+    for key in ("conversation_id", "session_id"):
+        candidate = value.get(key)
+        if _looks_like_codex_session_id(candidate):
+            return str(candidate)
+    return ""
+
+
+def _looks_like_codex_session_id(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    text = value.strip()
+    return bool(8 <= len(text) <= 200 and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]*", text))
+
+
+def _latest_codex_session_id(codex_home: Path | None) -> str:
+    if codex_home is None or not codex_home.exists():
+        return ""
+    candidates = sorted(
+        (path for path in (codex_home / "sessions").glob("**/*.jsonl") if path.is_file()),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    for path in candidates:
+        try:
+            session_id = _extract_codex_session_id(path.read_text(errors="replace"))
+        except OSError:
+            continue
+        if session_id:
+            return session_id
+    return ""
+
+
+def _record_codex_invocation_metadata(
+    request: StageExecutionRequest,
+    *,
+    command: list[str],
+    resume_id: str,
+    conversation_id: str,
+    codex_home: Path | None,
+    ephemeral: bool,
+    returncode: int,
+) -> None:
+    sanitized_command = list(command)
+    if sanitized_command and len(sanitized_command[-1]) > 200:
+        sanitized_command[-1] = "<prompt>"
+    request.executor_metadata["codex_exec"] = {
+        "mode": "resume" if resume_id else "new",
+        "resume_id": resume_id,
+        "conversation_id": conversation_id,
+        "codex_home": str(codex_home) if codex_home is not None else "",
+        "ephemeral": ephemeral,
+        "returncode": returncode,
+        "command": sanitized_command,
+    }
 
 
 def run_requirement(
@@ -379,36 +528,27 @@ class CodexExecStageExecutor:
         prompt: str,
         output_path: Path,
     ) -> subprocess.CompletedProcess[str]:
-        command = [
-            "codex",
-            "exec",
-            "--cd",
-            str(request.repo_root),
-            "--sandbox",
-            self.options.codex_sandbox,
-            "-c",
-            f'approval_policy="{self.options.codex_approval_policy}"',
-            "--output-schema",
-            str(request.output_schema_path),
-            "-o",
-            str(output_path),
-        ]
-        if self.options.codex_ignore_rules:
-            command.append("--ignore-rules")
-        if self.options.codex_disable_plugins:
-            command.extend(["--disable", "plugins"])
-        if self.options.codex_ephemeral:
-            command.append("--ephemeral")
-        if self.options.codex_skip_git_repo_check:
-            command.append("--skip-git-repo-check")
-        if self.options.codex_model:
-            command.extend(["--model", self.options.codex_model])
-        command.extend(self.options.codex_extra_args)
-        command.append(prompt)
+        resume_id = "" if self.options.codex_ephemeral else _load_codex_resume_id(request)
+        command = self._build_codex_command(request, prompt=prompt, output_path=output_path, resume_id=resume_id)
+        codex_home: Path | None = None
+        completed: subprocess.CompletedProcess[str]
         try:
             if self.options.codex_isolate_home:
-                with isolated_codex_env(env_config_path=request.executor_env_config_path) as env:
-                    return subprocess.run(
+                if self.options.codex_ephemeral or getattr(request, "state_store", None) is None:
+                    with isolated_codex_env(env_config_path=request.executor_env_config_path) as env:
+                        completed = subprocess.run(
+                            command,
+                            cwd=request.repo_root,
+                            capture_output=True,
+                            text=True,
+                            timeout=self.options.command_timeout_seconds,
+                            check=False,
+                            env=env,
+                            stdin=subprocess.DEVNULL,
+                        )
+                else:
+                    env, codex_home = _codex_env_for_stage_request(request)
+                    completed = subprocess.run(
                         command,
                         cwd=request.repo_root,
                         capture_output=True,
@@ -418,21 +558,89 @@ class CodexExecStageExecutor:
                         env=env,
                         stdin=subprocess.DEVNULL,
                     )
-            return subprocess.run(
-                command,
-                cwd=request.repo_root,
-                capture_output=True,
-                text=True,
-                timeout=self.options.command_timeout_seconds,
-                check=False,
-                stdin=subprocess.DEVNULL,
-            )
+            else:
+                completed = subprocess.run(
+                    command,
+                    cwd=request.repo_root,
+                    capture_output=True,
+                    text=True,
+                    timeout=self.options.command_timeout_seconds,
+                    check=False,
+                    stdin=subprocess.DEVNULL,
+                )
         except FileNotFoundError as exc:
-            return subprocess.CompletedProcess(command, 127, stdout="", stderr=str(exc))
+            completed = subprocess.CompletedProcess(command, 127, stdout="", stderr=str(exc))
         except subprocess.TimeoutExpired as exc:
             stdout = _coerce_stream_text(exc.stdout)
             stderr = _coerce_stream_text(exc.stderr) or f"codex exec timed out after {self.options.command_timeout_seconds} seconds."
-            return subprocess.CompletedProcess(command, 124, stdout=stdout, stderr=stderr)
+            completed = subprocess.CompletedProcess(command, 124, stdout=stdout, stderr=stderr)
+
+        conversation_id = "" if self.options.codex_ephemeral else _extract_codex_session_id(completed.stdout)
+        if not conversation_id and not self.options.codex_ephemeral:
+            conversation_id = _latest_codex_session_id(codex_home)
+        if conversation_id and not self.options.codex_ephemeral:
+            _save_codex_resume_id(request, conversation_id, codex_home=codex_home)
+        _record_codex_invocation_metadata(
+            request,
+            command=command,
+            resume_id=resume_id,
+            conversation_id=conversation_id,
+            codex_home=codex_home,
+            ephemeral=self.options.codex_ephemeral,
+            returncode=completed.returncode,
+        )
+        return completed
+
+    def _build_codex_command(
+        self,
+        request: StageExecutionRequest,
+        *,
+        prompt: str,
+        output_path: Path,
+        resume_id: str = "",
+    ) -> list[str]:
+        if resume_id:
+            command = [
+                "codex",
+                "exec",
+                "resume",
+                "-c",
+                f'approval_policy="{self.options.codex_approval_policy}"',
+                "--json",
+                "-o",
+                str(output_path),
+            ]
+        else:
+            command = [
+                "codex",
+                "exec",
+                "--cd",
+                str(request.repo_root),
+                "--sandbox",
+                self.options.codex_sandbox,
+                "-c",
+                f'approval_policy="{self.options.codex_approval_policy}"',
+                "--output-schema",
+                str(request.output_schema_path),
+                "--json",
+                "-o",
+                str(output_path),
+            ]
+        if self.options.codex_ignore_rules:
+            command.append("--ignore-rules")
+        if self.options.codex_disable_plugins:
+            command.extend(["--disable", "plugins"])
+        if self.options.codex_ephemeral and not resume_id:
+            command.append("--ephemeral")
+        if self.options.codex_skip_git_repo_check:
+            command.append("--skip-git-repo-check")
+        if self.options.codex_model:
+            command.extend(["--model", self.options.codex_model])
+        command.extend(self.options.codex_extra_args)
+        if resume_id:
+            command.append(resume_id)
+        command.append(prompt)
+        return command
 
     def _repair_stage_output(
         self,
@@ -905,7 +1113,11 @@ def _execute_stage(
         trace_steps,
         step="executor_completed",
         status="ok" if result.status != "blocked" else "blocked",
-        details={"executor": executor.name, "result_status": result.status},
+        details={
+            "executor": executor.name,
+            "result_status": result.status,
+            "executor_metadata": dict(request.executor_metadata),
+        },
     )
     _add_runtime_trace_step(
         trace_steps,
@@ -1648,14 +1860,38 @@ def _add_runtime_trace_step(
     status: str = "ok",
     details: dict[str, Any] | None = None,
 ) -> None:
+    now = datetime.now(timezone.utc)
+    first_at = _parse_trace_timestamp(trace_steps[0].get("at")) if trace_steps else None
+    previous_at = _parse_trace_timestamp(trace_steps[-1].get("at")) if trace_steps else None
     trace_steps.append(
         {
             "step": step,
             "status": status,
-            "at": datetime.now(timezone.utc).isoformat(),
+            "at": now.isoformat(),
+            "elapsed_seconds": _trace_seconds_between(first_at, now) if first_at is not None else 0.0,
+            "since_previous_seconds": _trace_seconds_between(previous_at, now) if previous_at is not None else 0.0,
             "details": details or {},
         }
     )
+
+
+def _trace_seconds_between(start: datetime, end: datetime) -> float:
+    return round(max((end - start).total_seconds(), 0.0), 3)
+
+
+def _parse_trace_timestamp(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
 
 
 def _write_runtime_trace(

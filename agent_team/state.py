@@ -239,6 +239,29 @@ class StateStore:
             return None
         return AcceptanceContract.from_dict(contract_payload)
 
+    def codex_home_path(self, session_id: str) -> Path:
+        return self.load_session(session_id).session_dir / "codex-home"
+
+    def load_codex_exec_state(self, session_id: str) -> dict[str, object]:
+        session_path = self._session_json_path(session_id)
+        if not session_path.exists():
+            return {}
+        payload = json.loads(session_path.read_text())
+        state = payload.get("codex_exec", {})
+        return dict(state) if isinstance(state, dict) else {}
+
+    def save_codex_exec_state(self, session_id: str, state: dict[str, object]) -> None:
+        session = self.load_session(session_id)
+        session_path = session.session_dir / "session.json"
+        payload = json.loads(session_path.read_text()) if session_path.exists() else session.to_dict()
+        existing = payload.get("codex_exec", {})
+        merged = dict(existing) if isinstance(existing, dict) else {}
+        merged.update(state)
+        merged["updated_at"] = self._timestamp()
+        payload["codex_exec"] = merged
+        payload["updated_at"] = merged["updated_at"]
+        self._write_json(session_path, payload)
+
     def record_stage_result(self, session_id: str, result: StageResultEnvelope) -> StageRecord:
         session = self.load_session(session_id)
         round_index = self._next_round_index(session, result.stage)

@@ -14,6 +14,70 @@ def local_temp_dir() -> Path:
     return path
 
 
+def product_definition_request(
+    root: Path,
+    *,
+    state_store=None,
+    session_id: str = "session",
+    executor_env_config_path: Path | None = None,
+):
+    from agent_team.execution_context import StageExecutionContext
+    from agent_team.models import StageContract
+    from agent_team.runtime_driver import StageExecutionRequest
+
+    return StageExecutionRequest(
+        repo_root=root,
+        state_store=state_store,
+        session_id=session_id,
+        run_id="product-definition-run-1",
+        contract=StageContract(
+            session_id=session_id,
+            stage="ProductDefinition",
+            goal="Write an L1 delta.",
+            contract_id="contract",
+            required_outputs=["product-definition-delta.md"],
+        ),
+        context=StageExecutionContext(
+            session_id=session_id,
+            stage="ProductDefinition",
+            round_index=1,
+            context_id="context",
+            contract_id="contract",
+            original_request_summary="写个js文件，并打印hello world",
+            approved_product_definition_summary="",
+            acceptance_matrix=[],
+            constraints=[],
+            required_outputs=["product-definition-delta.md"],
+            required_evidence=[],
+            relevant_artifacts=[],
+        ),
+        contract_path=root / "contract.json",
+        context_path=root / "context.json",
+        result_path=root / "result.json",
+        output_schema_path=root / "schema.json",
+        prompt_path=root / "prompt.md",
+        executor_env_config_path=executor_env_config_path,
+    )
+
+
+def write_product_definition_result(output_path: Path, *, summary: str = "ProductDefinition completed.") -> None:
+    output_path.write_text(
+        json.dumps(
+            {
+                "status": "completed",
+                "artifact_content": "# Product Definition Delta\n",
+                "journal": "",
+                "findings": [],
+                "evidence": [],
+                "suggested_next_owner": "",
+                "summary": summary,
+                "acceptance_status": "",
+                "blocked_reason": "",
+            }
+        )
+    )
+
+
 class RuntimeDriverSchemaTests(unittest.TestCase):
     def test_stage_result_schema_is_strict_for_codex_structured_output(self) -> None:
         from agent_team.runtime_driver import _stage_result_schema
@@ -466,6 +530,136 @@ class RuntimeDriverSchemaTests(unittest.TestCase):
         self.assertIn("CODEX_HOME", captured_env)
         self.assertNotIn("DATABASE_URL", captured_env)
 
+    def test_codex_exec_stage_executor_persists_resume_id_from_json_stream(self) -> None:
+        from agent_team.runtime_driver import CodexExecStageExecutor, RuntimeDriverOptions
+        from agent_team.state import StateStore
+
+        conversation_id = "019e3d5f-2b95-7e90-9f55-62a892a01234"
+        captured_env = {}
+        commands = []
+
+        def fake_run(command, *, cwd, capture_output, text, timeout, check, env=None, stdin=None):
+            commands.append(command)
+            captured_env.update(env or {})
+            write_product_definition_result(Path(command[command.index("-o") + 1]))
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout=json.dumps({"type": "session_meta", "payload": {"id": conversation_id}}) + "\n",
+                stderr="",
+            )
+
+        with TemporaryDirectory(dir=local_temp_dir()) as temp_dir:
+            root = Path(temp_dir)
+            store = StateStore(root / "state")
+            session = store.create_session("demo")
+            source_home = root / "source-codex"
+            source_home.mkdir()
+            request = product_definition_request(root, state_store=store, session_id=session.session_id)
+
+            with patch("agent_team.runtime_driver.default_codex_home", lambda: source_home):
+                with patch("agent_team.runtime_driver.subprocess.run", fake_run):
+                    envelope = CodexExecStageExecutor(RuntimeDriverOptions()).execute(request)
+
+            saved = store.load_codex_exec_state(session.session_id)
+            codex_home = store.codex_home_path(session.session_id)
+
+        self.assertEqual(envelope.status, "completed")
+        self.assertEqual(saved["conversation_id"], conversation_id)
+        self.assertEqual(captured_env["CODEX_HOME"], str(codex_home))
+        self.assertNotIn("--ephemeral", commands[0])
+        self.assertIn("--json", commands[0])
+        self.assertEqual(request.executor_metadata["codex_exec"]["conversation_id"], conversation_id)
+        self.assertEqual(request.executor_metadata["codex_exec"]["mode"], "new")
+
+    def test_codex_exec_stage_executor_uses_persistent_session_codex_home(self) -> None:
+        from agent_team.runtime_driver import CodexExecStageExecutor, RuntimeDriverOptions
+        from agent_team.state import StateStore
+
+        captured_env = {}
+
+        def fake_run(command, *, cwd, capture_output, text, timeout, check, env=None, stdin=None):
+            captured_env.update(env or {})
+            write_product_definition_result(Path(command[command.index("-o") + 1]))
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+        with TemporaryDirectory(dir=local_temp_dir()) as temp_dir:
+            root = Path(temp_dir)
+            store = StateStore(root / "state")
+            session = store.create_session("demo")
+            source_home = root / "source-codex"
+            source_home.mkdir()
+            (source_home / "auth.json").write_text('{"token": "secret"}')
+            (source_home / "config.toml").write_text('model = "gpt-5.4"\n[mcp_servers.test]\ncommand = "secret"\n')
+            request = product_definition_request(root, state_store=store, session_id=session.session_id)
+
+            with patch("agent_team.runtime_driver.default_codex_home", lambda: source_home):
+                with patch("agent_team.runtime_driver.subprocess.run", fake_run):
+                    CodexExecStageExecutor(RuntimeDriverOptions()).execute(request)
+
+            codex_home = store.codex_home_path(session.session_id)
+            auth_exists = (codex_home / "auth.json").exists()
+            config_text = (codex_home / "config.toml").read_text()
+
+        self.assertEqual(captured_env["CODEX_HOME"], str(codex_home))
+        self.assertTrue(auth_exists)
+        self.assertIn('model = "gpt-5.4"', config_text)
+        self.assertNotIn("mcp_servers", config_text)
+
+    def test_codex_exec_stage_executor_resumes_recorded_session(self) -> None:
+        from agent_team.runtime_driver import CodexExecStageExecutor, RuntimeDriverOptions
+        from agent_team.state import StateStore
+
+        resume_id = "019e3d5f-2b95-7e90-9f55-62a892a01234"
+        commands = []
+
+        def fake_run(command, *, cwd, capture_output, text, timeout, check, env=None, stdin=None):
+            commands.append(command)
+            write_product_definition_result(Path(command[command.index("-o") + 1]), summary="resumed")
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout=json.dumps({"type": "session_meta", "payload": {"id": resume_id}}) + "\n",
+                stderr="",
+            )
+
+        with TemporaryDirectory(dir=local_temp_dir()) as temp_dir:
+            root = Path(temp_dir)
+            store = StateStore(root / "state")
+            session = store.create_session("demo")
+            store.save_codex_exec_state(session.session_id, {"conversation_id": resume_id})
+            source_home = root / "source-codex"
+            source_home.mkdir()
+            request = product_definition_request(root, state_store=store, session_id=session.session_id)
+
+            with patch("agent_team.runtime_driver.default_codex_home", lambda: source_home):
+                with patch("agent_team.runtime_driver.subprocess.run", fake_run):
+                    envelope = CodexExecStageExecutor(RuntimeDriverOptions()).execute(request)
+
+        self.assertEqual(envelope.summary, "resumed")
+        self.assertEqual(commands[0][:3], ["codex", "exec", "resume"])
+        self.assertIn(resume_id, commands[0])
+        self.assertIn("--json", commands[0])
+        self.assertNotIn("--cd", commands[0])
+        self.assertNotIn("--sandbox", commands[0])
+        self.assertNotIn("--output-schema", commands[0])
+        self.assertNotIn("--ephemeral", commands[0])
+        self.assertEqual(request.executor_metadata["codex_exec"]["resume_id"], resume_id)
+        self.assertEqual(request.executor_metadata["codex_exec"]["mode"], "resume")
+
+    def test_codex_session_id_extraction_supports_session_meta_events(self) -> None:
+        from agent_team.runtime_driver import _extract_codex_session_id
+
+        stream = "\n".join(
+            [
+                json.dumps({"type": "agent_message", "payload": {"message": "ready"}}),
+                json.dumps({"type": "session_meta", "payload": {"id": "019e3d5f-2b95-7e90-9f55-62a892a01234"}}),
+                json.dumps({"type": "agent_message", "payload": {"id": "message-id-should-not-win"}}),
+            ]
+        )
+
+        self.assertEqual(_extract_codex_session_id(stream), "019e3d5f-2b95-7e90-9f55-62a892a01234")
+
     def test_codex_exec_repairs_output_protocol_error_once(self) -> None:
         from agent_team.execution_context import StageExecutionContext
         from agent_team.models import StageContract
@@ -749,6 +943,8 @@ class RuntimeDriverTraceTests(unittest.TestCase):
             ],
         )
         self.assertTrue(all(step["status"] == "ok" for step in stage_result["steps"]))
+        self.assertTrue(all("elapsed_seconds" in step for step in stage_result["steps"]))
+        self.assertTrue(all("since_previous_seconds" in step for step in stage_result["steps"]))
         self.assertIn("stage_result", stage_result)
         self.assertNotIn("artifact_content", stage_result["stage_result"])
         self.assertNotIn("supplemental_artifacts", stage_result["stage_result"])

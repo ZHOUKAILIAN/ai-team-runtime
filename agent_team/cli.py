@@ -16,6 +16,7 @@ from .harness_paths import default_state_root
 from .models import Finding, GateResult, StageResultEnvelope, WorkflowSummary
 from .panel import build_panel_snapshot
 from .project_structure import ProjectUpdateReport, ensure_project_structure, update_project_structure
+from .runtime_metrics import format_duration, stage_run_timings
 from .skill_registry import STAGES, SOURCE_LABELS, SkillRegistry
 from .stage_contracts import build_stage_contract
 from .stage_machine import StageMachine
@@ -380,6 +381,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Extra argument passed through to codex exec. Repeat for multiple arguments.",
     )
     run_requirement_parser.add_argument(
+        "--codex-ephemeral",
+        action="store_true",
+        help=(
+            "Run codex-exec without persisting Codex session files. This disables automatic "
+            "codex exec resume for later stage attempts."
+        ),
+    )
+    run_requirement_parser.add_argument(
         "--trace-prompts",
         action="store_true",
         help="Persist rendered agent prompt bundles for debugging. Disabled by default.",
@@ -712,8 +721,9 @@ def _handle_run_requirement(args: argparse.Namespace) -> int:
         base_head=base_head,
     )
     _print_runtime_driver_result(result)
+    store = StateStore(args.state_root)
+    _print_stage_timings(store, result.session_id)
     if args.model_output != "off":
-        store = StateStore(args.state_root)
         summary = store.load_workflow_summary(result.session_id)
         if result.status in {"blocked", "failed"}:
             _print_run_requirement_blocked_summary(
@@ -752,6 +762,7 @@ def _runtime_driver_options_from_args(args: argparse.Namespace, *, interactive: 
         codex_sandbox=args.codex_sandbox,
         codex_approval_policy=args.codex_approval_policy,
         codex_extra_args=list(args.codex_extra_arg),
+        codex_ephemeral=bool(getattr(args, "codex_ephemeral", False)),
         enabled_skills_by_stage=_resolve_run_enabled_skills(args, skill_registry),
         interactive=interactive,
         trace_prompts=bool(args.trace_prompts),
@@ -2310,6 +2321,7 @@ def _handle_status(args: argparse.Namespace) -> int:
     if args.verbose:
         summary = store.load_workflow_summary(session_id)
         _print_summary(summary)
+        _print_stage_timings(store, session_id)
         if summary.current_state in WAIT_STATES:
             print("next_action: approve|rework|reject")
             return 0
@@ -2358,6 +2370,28 @@ def _handle_status(args: argparse.Namespace) -> int:
     print(f"session_id: {session_id}")
     print(f"panel: agent-team panel --session-id {session_id}")
     return 0
+
+
+def _print_stage_timings(store: StateStore, session_id: str) -> None:
+    rows = stage_run_timings(store.stage_runs(session_id))
+    if not rows:
+        return
+    print("stage_timings:")
+    for row in rows:
+        stage = str(row.get("stage", ""))
+        attempt = int(row.get("attempt") or 0)
+        state = str(row.get("state", ""))
+        total = format_duration(row.get("total_seconds"))
+        setup = format_duration(row.get("setup_seconds"))
+        executor = format_duration(row.get("executor_seconds"))
+        gate = format_duration(row.get("gate_seconds"))
+        postprocess = format_duration(row.get("postprocess_seconds"))
+        last_step = str(row.get("last_step", ""))
+        print(
+            f"- {stage} attempt-{attempt:03d} {state}: "
+            f"total={total}, setup={setup}, executor={executor}, gate={gate}, "
+            f"postprocess={postprocess}, last_step={last_step}"
+        )
 
 
 def _handle_panel(args: argparse.Namespace) -> int:

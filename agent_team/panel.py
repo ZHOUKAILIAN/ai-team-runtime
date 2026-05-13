@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from .models import WorkflowSummary
+from .runtime_metrics import stage_run_timings
 from .state import StateStore
 from .status import build_status_overview
 
@@ -55,6 +56,7 @@ def build_panel_snapshot(
         },
         "artifacts": _artifact_rows(summary),
         "stages": stage_records,
+        "stage_timings": stage_run_timings(store.stage_runs(session_id)),
         "events": events,
     }
 

@@ -79,6 +79,43 @@ class PanelTests(unittest.TestCase):
             self.assertTrue(any(item["name"] == "workflow_summary" for item in snapshot["artifacts"]))
             self.assertEqual(snapshot["events"][0]["kind"], "session_created")
 
+    def test_panel_snapshot_includes_stage_timing_summary(self) -> None:
+        from agent_team.panel import build_panel_snapshot
+        from agent_team.state import StateStore
+
+        with TemporaryDirectory(dir=local_temp_dir()) as temp_dir:
+            root = Path(temp_dir)
+            store = StateStore(root)
+            session = store.create_session("measure stage time")
+            run = store.create_stage_run(
+                session_id=session.session_id,
+                stage="ProductDefinition",
+                contract_id="contract-product-definition",
+                required_outputs=["product-definition-delta.md"],
+                required_evidence=["l1_classification"],
+                worker="dry-run",
+            )
+            store.update_stage_run_trace(
+                session_id=session.session_id,
+                run_id=run.run_id,
+                required_pass_steps=[],
+                steps=[
+                    {"step": "contract_built", "status": "ok", "at": "2026-05-12T00:00:00+00:00"},
+                    {"step": "executor_started", "status": "ok", "at": "2026-05-12T00:00:02+00:00"},
+                    {"step": "executor_completed", "status": "ok", "at": "2026-05-12T00:00:07+00:00"},
+                    {"step": "result_submitted", "status": "ok", "at": "2026-05-12T00:00:08+00:00"},
+                    {"step": "gate_evaluated", "status": "ok", "at": "2026-05-12T00:00:10+00:00"},
+                ],
+            )
+
+            snapshot = build_panel_snapshot(store, session.session_id)
+
+        timing = snapshot["stage_timings"][0]
+        self.assertEqual(timing["stage"], "ProductDefinition")
+        self.assertEqual(timing["total_seconds"], 10.0)
+        self.assertEqual(timing["executor_seconds"], 5.0)
+        self.assertEqual(timing["gate_seconds"], 2.0)
+
     def test_state_store_does_not_write_redundant_status_markdown(self) -> None:
         from agent_team.state import StateStore
 

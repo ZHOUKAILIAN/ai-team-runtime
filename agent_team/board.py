@@ -7,6 +7,7 @@ from typing import Any
 
 from .harness_paths import _default_codex_home
 from .models import GateResult, StageRunRecord, model_dataclass
+from .runtime_metrics import stage_run_timing
 from .state import StateStore
 from .workflow import WAIT_STATES
 from .workspace_metadata import WorkspaceMetadata, load_workspace_metadata
@@ -156,4 +157,5 @@ def _run_payload(run: StageRunRecord | None) -> dict[str, Any] | None:
         "required_outputs": list(run.required_outputs),
         "required_evidence": list(run.required_evidence),
         "artifact_paths": dict(run.artifact_paths),
+        "timing": stage_run_timing(run),
     }

@@ -73,6 +73,28 @@ class StateTests(unittest.TestCase):
             self.assertEqual(summary.human_decision, "pending")
             self.assertIn("workflow_summary", summary.artifact_paths)
 
+    def test_state_store_persists_codex_exec_resume_state(self) -> None:
+        from agent_team.state import StateStore
+
+        with TemporaryDirectory(dir=local_temp_dir()) as temp_dir:
+            store = StateStore(Path(temp_dir))
+            session = store.create_session("resume codex")
+
+            store.save_codex_exec_state(
+                session.session_id,
+                {
+                    "conversation_id": "019e3d5f-2b95-7e90-9f55-62a892a01234",
+                    "codex_home": str(store.codex_home_path(session.session_id)),
+                },
+            )
+            store.save_codex_exec_state(session.session_id, {"last_stage": "Implementation"})
+            state = store.load_codex_exec_state(session.session_id)
+
+        self.assertEqual(state["conversation_id"], "019e3d5f-2b95-7e90-9f55-62a892a01234")
+        self.assertEqual(state["last_stage"], "Implementation")
+        self.assertTrue(str(state["codex_home"]).endswith("/codex-home"))
+        self.assertIn("updated_at", state)
+
     def test_state_store_creates_unique_session_ids_for_same_request(self) -> None:
         from agent_team.state import StateStore
 
