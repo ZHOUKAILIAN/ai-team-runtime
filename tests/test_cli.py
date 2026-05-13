@@ -492,8 +492,99 @@ class CliTests(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             output = stdout.getvalue()
             self.assertIn("当前阶段执行被阻塞", output)
+            self.assertIn("阻塞诊断:", output)
+            self.assertIn("错误:", output)
+            self.assertIn("问题:", output)
+            self.assertIn("阻塞点:", output)
+            self.assertIn("Invalid stage payload JSON", output)
             self.assertIn("诊断信息:", output)
             self.assertIn("Session saved.", output)
+
+    def test_blocked_summary_splits_error_issue_and_blocker_details(self) -> None:
+        from agent_team.cli import _print_run_requirement_blocked_summary
+        from agent_team.models import EvidenceItem, Finding, GateResult, StageResultEnvelope
+        from agent_team.state import StateStore
+
+        with TemporaryDirectory(dir=local_temp_dir()) as temp_dir:
+            store = StateStore(Path(temp_dir))
+            session = store.create_session("修复重复社群成员")
+            run = store.create_stage_run(
+                session_id=session.session_id,
+                stage="Implementation",
+                contract_id="contract-1",
+                required_outputs=["implementation.md"],
+                required_evidence=["self_verification"],
+                worker="codex-exec",
+            )
+            stage_result = StageResultEnvelope(
+                session_id=session.session_id,
+                stage="Implementation",
+                status="blocked",
+                artifact_name="implementation.md",
+                artifact_content="# Implementation\n",
+                contract_id="contract-1",
+                blocked_reason="端到端验收需要真实服务、数据库访问权限和脱敏 groupId。",
+                findings=[
+                    Finding(
+                        source_stage="Implementation",
+                        target_stage="Verification",
+                        issue="端到端 API 到持久化数据验证未完成。",
+                        severity="blocking",
+                        required_evidence=[
+                            "脱敏 groupId",
+                            "/api/v1/group/people 前两页响应",
+                        ],
+                        completion_signal="需要用户提供脱敏 groupId、接口响应和数据库查询结果后才能关闭验收。",
+                    )
+                ],
+                evidence=[
+                    EvidenceItem(
+                        name="self_verification",
+                        kind="command",
+                        summary="service 测试包存在既有构造函数参数数量不匹配。",
+                        command="go test ./internal/app/group_pals/service",
+                        exit_code=1,
+                    )
+                ],
+            )
+            submitted = store.submit_stage_run_result(run.run_id, stage_result)
+            store.update_stage_run(
+                submitted,
+                state="BLOCKED",
+                gate_result=GateResult(
+                    status="BLOCKED",
+                    reason=stage_result.blocked_reason,
+                    findings=list(stage_result.findings),
+                ),
+                blocked_reason=stage_result.blocked_reason,
+            )
+            result = type(
+                "Result",
+                (),
+                {
+                    "gate_status": "BLOCKED",
+                    "gate_reason": stage_result.blocked_reason,
+                },
+            )()
+
+            stdout = io.StringIO()
+            with patch("sys.stdout", stdout):
+                _print_run_requirement_blocked_summary(
+                    store=store,
+                    session_id=session.session_id,
+                    stage="Implementation",
+                    result=result,
+                )
+
+            output = stdout.getvalue()
+            self.assertIn("错误:", output)
+            self.assertIn("Implementation 阶段没有推进：门禁判定为 BLOCKED。", output)
+            self.assertIn("问题:", output)
+            self.assertIn("端到端 API 到持久化数据验证未完成。", output)
+            self.assertIn("验证命令失败（exit=1）：service 测试包存在既有构造函数参数数量不匹配。", output)
+            self.assertIn("阻塞点:", output)
+            self.assertIn("需要补充证据：脱敏 groupId", output)
+            self.assertIn("修复失败命令后重新运行：go test ./internal/app/group_pals/service", output)
 
     def test_blocked_next_step_points_users_to_alignment_questions(self) -> None:
         from agent_team.cli import _run_requirement_blocked_next_step_text, _run_requirement_next_step_text
