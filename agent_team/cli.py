@@ -9,6 +9,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from .execution_context import build_stage_execution_context
+from .executor_env import copy_executor_env_config_if_exists, ensure_executor_env_config
 from .five_layer_init import DEFAULT_FIVE_LAYER_SKILL_SOURCE, run_five_layer_classification
 from .gatekeeper import evaluate_candidate
 from .harness_paths import default_state_root
@@ -118,6 +119,12 @@ def _prepare_new_run_workspace(args: argparse.Namespace, *, message: str) -> tup
         raise SystemExit(str(exc)) from exc
     args.repo_root = worktree.path
     args.state_root = default_state_root(repo_root=worktree.path).resolve()
+    copied_env_config = copy_executor_env_config_if_exists(
+        source_state_root=default_state_root(repo_root=args.project_root).resolve(),
+        target_state_root=args.state_root,
+    )
+    if copied_env_config is None:
+        ensure_executor_env_config(args.state_root)
     refresh_workspace_metadata(state_root=args.state_root, repo_root=args.repo_root)
     print(f"worktree_path: {worktree.path}")
     print(f"branch: {worktree.branch}")
@@ -586,6 +593,7 @@ def build_parser() -> argparse.ArgumentParser:
 def _handle_init(args: argparse.Namespace) -> int:
     store = StateStore(args.state_root)
     store.ensure_layout()
+    executor_env_path = ensure_executor_env_config(args.state_root)
     structure = ensure_project_structure(args.repo_root)
     five_layer = run_five_layer_classification(
         repo_root=structure.repo_root,
@@ -600,6 +608,7 @@ def _handle_init(args: argparse.Namespace) -> int:
     print(f"repo_root: {structure.repo_root}")
     print(f"project_root: {structure.project_root}")
     print(f"doc_map_path: {structure.doc_map_path}")
+    print(f"executor_env_config: {executor_env_path}")
     print(f"used_default_docs: {structure.used_default_docs}")
     print(f"doc_map: {json.dumps(structure.doc_map, ensure_ascii=False, sort_keys=True)}")
     print(f"five_layer_classification_status: {five_layer.status}")
@@ -663,6 +672,7 @@ def _handle_run_requirement(args: argparse.Namespace) -> int:
 
     interactive = _run_requirement_should_be_interactive(args)
     message, session_id = _resolve_run_requirement_target(args, interactive=interactive)
+    ensure_executor_env_config(args.state_root)
     base_branch = ""
     base_head = ""
     if message and not session_id and not getattr(args, "continue_run", False):
