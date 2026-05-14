@@ -68,6 +68,7 @@ class BoardSnapshotTests(unittest.TestCase):
                 session_payload["active_run"]["required_evidence"],
                 ["l1_classification"],
             )
+            self.assertIn("timing", session_payload["active_run"])
 
     def test_board_snapshot_falls_back_for_legacy_workspace_without_metadata(self) -> None:
         from agent_team.board import build_board_snapshot
