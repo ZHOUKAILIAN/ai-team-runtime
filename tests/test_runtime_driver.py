@@ -659,7 +659,6 @@ class RuntimeDriverSchemaTests(unittest.TestCase):
         )
 
         self.assertEqual(_extract_codex_session_id(stream), "019e3d5f-2b95-7e90-9f55-62a892a01234")
-
     def test_codex_exec_repairs_output_protocol_error_once(self) -> None:
         from agent_team.execution_context import StageExecutionContext
         from agent_team.models import StageContract
