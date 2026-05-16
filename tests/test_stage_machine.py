@@ -2,7 +2,7 @@ import unittest
 
 
 class StageMachineTests(unittest.TestCase):
-    def test_route_result_moves_to_product_definition(self) -> None:
+    def test_route_result_uses_required_stage_order(self) -> None:
         from agent_team.models import StageResultEnvelope, WorkflowSummary
         from agent_team.stage_machine import StageMachine
 
@@ -17,13 +17,20 @@ class StageMachineTests(unittest.TestCase):
             stage="Route",
             status="completed",
             artifact_name="route-packet.json",
-            artifact_content='{"affected_layers":["L1"]}',
+            artifact_content=(
+                '{"affected_layers":["L2"],'
+                '"required_stages":["TechnicalDesign","Implementation","Verification","GovernanceReview","Acceptance","SessionHandoff"],'
+                '"stage_decisions":{"ProductDefinition":{"decision":"skipped","reason":"no_l1_delta"}},'
+                '"verification_mode":"static_only","baseline_sources":[],"red_lines":[],"unresolved_questions":[]}'
+            ),
         )
 
         updated = StageMachine().advance(summary=summary, stage_result=result)
 
-        self.assertEqual(updated.current_state, "ProductDefinition")
-        self.assertEqual(updated.current_stage, "ProductDefinition")
+        self.assertEqual(updated.current_state, "TechnicalDesign")
+        self.assertEqual(updated.current_stage, "TechnicalDesign")
+        self.assertEqual(updated.stage_statuses["ProductDefinition"], "skipped")
+        self.assertEqual(updated.verification_mode, "static_only")
 
     def test_product_definition_result_waits_for_human_approval(self) -> None:
         from agent_team.models import StageResultEnvelope, WorkflowSummary
@@ -49,6 +56,33 @@ class StageMachineTests(unittest.TestCase):
         self.assertEqual(updated.current_stage, "ProductDefinition")
         self.assertEqual(updated.stage_statuses["ProductDefinition"], "drafted")
         self.assertEqual(updated.human_decision, "pending")
+
+    def test_product_definition_no_l1_delta_skips_wait_state(self) -> None:
+        from agent_team.models import StageResultEnvelope, WorkflowSummary
+        from agent_team.stage_machine import StageMachine
+
+        summary = WorkflowSummary(
+            session_id="session-1",
+            runtime_mode="harness",
+            current_state="ProductDefinition",
+            current_stage="ProductDefinition",
+            route_required_stages=["TechnicalDesign", "Implementation", "Verification"],
+        )
+        result = StageResultEnvelope(
+            session_id="session-1",
+            stage="ProductDefinition",
+            status="completed",
+            artifact_name="product-definition-delta.md",
+            artifact_content="# Product Definition Delta\n\n## 非 L1 内容\n- 当前需求没有稳定语义变化。\n",
+            product_definition_outcome="no_l1_delta",
+        )
+
+        updated = StageMachine().advance(summary=summary, stage_result=result)
+
+        self.assertEqual(updated.current_state, "TechnicalDesign")
+        self.assertEqual(updated.current_stage, "TechnicalDesign")
+        self.assertEqual(updated.stage_statuses["ProductDefinition"], "skipped")
+        self.assertEqual(updated.product_definition_outcome, "no_l1_delta")
 
     def test_wait_for_product_definition_approval_rejects_plain_advance(self) -> None:
         from agent_team.models import StageResultEnvelope, WorkflowSummary

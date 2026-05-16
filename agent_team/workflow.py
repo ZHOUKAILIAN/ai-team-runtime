@@ -90,3 +90,20 @@ def artifact_name_for(stage: str) -> str:
 
 def artifact_key_for(stage: str) -> str:
     return STAGE_ARTIFACT_KEYS.get(stage, stage.lower())
+
+
+def ordered_required_stages(required_stages: list[str]) -> list[str]:
+    return [stage for stage in STAGES if stage in required_stages]
+
+
+def next_required_stage(*, required_stages: list[str], after_stage: str) -> str | None:
+    ordered = ordered_required_stages(required_stages)
+    if not ordered:
+        return None
+    if after_stage not in STAGES:
+        return ordered[0]
+    after_index = STAGES.index(after_stage)
+    for stage in ordered:
+        if STAGES.index(stage) > after_index:
+            return stage
+    return None

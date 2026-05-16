@@ -179,6 +179,10 @@ class WorkflowSummary:
     verification_round: int = 0
     blocked_reason: str = ""
     artifact_paths: dict[str, str] = field(default_factory=dict)
+    route_required_stages: list[str] = field(default_factory=list)
+    route_stage_decisions: dict[str, dict[str, str]] = field(default_factory=dict)
+    verification_mode: str = ""
+    product_definition_outcome: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -192,6 +196,13 @@ class WorkflowSummary:
             "verification_round": self.verification_round,
             "blocked_reason": self.blocked_reason,
             "artifact_paths": dict(self.artifact_paths),
+            "route_required_stages": list(self.route_required_stages),
+            "route_stage_decisions": {
+                str(stage): {str(key): str(value) for key, value in item.items()}
+                for stage, item in self.route_stage_decisions.items()
+            },
+            "verification_mode": self.verification_mode,
+            "product_definition_outcome": self.product_definition_outcome,
         }
 
 
@@ -330,6 +341,13 @@ class StageResultEnvelope:
     blocked_reason: str = ""
     supplemental_artifacts: dict[str, str] = field(default_factory=dict)
     artifact_path: str = ""
+    route_required_stages: list[str] = field(default_factory=list)
+    route_stage_decisions: dict[str, dict[str, str]] = field(default_factory=dict)
+    verification_mode: str = ""
+    product_definition_outcome: str = ""
+    service_profile: str = ""
+    flow_ids: list[str] = field(default_factory=list)
+    evidence_paths: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.evidence = [EvidenceItem.from_value(item) for item in self.evidence]
@@ -364,6 +382,16 @@ class StageResultEnvelope:
             blocked_reason=payload.get("blocked_reason", ""),
             supplemental_artifacts=supplemental_artifacts,
             artifact_path=artifact_path,
+            route_required_stages=list(payload.get("route_required_stages", [])),
+            route_stage_decisions={
+                str(stage): {str(key): str(value) for key, value in dict(item).items()}
+                for stage, item in dict(payload.get("route_stage_decisions", {})).items()
+            },
+            verification_mode=payload.get("verification_mode", ""),
+            product_definition_outcome=payload.get("product_definition_outcome", ""),
+            service_profile=payload.get("service_profile", ""),
+            flow_ids=list(payload.get("flow_ids", [])),
+            evidence_paths=list(payload.get("evidence_paths", [])),
         )
 
     def to_dict(
@@ -389,6 +417,23 @@ class StageResultEnvelope:
             payload["acceptance_status"] = self.acceptance_status
         if self.blocked_reason:
             payload["blocked_reason"] = self.blocked_reason
+        if self.route_required_stages:
+            payload["route_required_stages"] = list(self.route_required_stages)
+        if self.route_stage_decisions:
+            payload["route_stage_decisions"] = {
+                str(stage): {str(key): str(value) for key, value in item.items()}
+                for stage, item in self.route_stage_decisions.items()
+            }
+        if self.verification_mode:
+            payload["verification_mode"] = self.verification_mode
+        if self.product_definition_outcome:
+            payload["product_definition_outcome"] = self.product_definition_outcome
+        if self.service_profile:
+            payload["service_profile"] = self.service_profile
+        if self.flow_ids:
+            payload["flow_ids"] = list(self.flow_ids)
+        if self.evidence_paths:
+            payload["evidence_paths"] = list(self.evidence_paths)
         if include_supplemental_artifacts and self.supplemental_artifacts:
             payload["supplemental_artifacts"] = dict(self.supplemental_artifacts)
         if include_artifact_content:
