@@ -4,16 +4,37 @@
 
 **目标：** 让每次新的 `agent-team run` 都从一个可配置的干净 base ref 拉出独立的最小分支和 worktree，同时不碰仓库内的五层正式文档，只把 AGT 的本地支持状态复制到新 worktree。
 
-**架构：** 先增加一个很小的本地策略加载器，读取 `.agent-team/local/worktree-policy.json`；然后把 worktree 创建逻辑统一收口到 `agent_team/worktree_sessions.py`，负责解析 clean base ref、生成 ASCII 分支名、复制允许继承的 `.agent-team/` 支持文件和目录。CLI 层只做窄改动：`run` 使用更完整的 `TaskWorktree` 元数据写入 session index，`continue` 语义保持不变。
+**架构：** 先增加一个很小的本地策略加载器，读取 `.agt/local/worktree-policy.json`；然后把 worktree 创建逻辑统一收口到 `agent_team/worktree_sessions.py`，负责解析 clean base ref、生成 ASCII 分支名、复制允许继承的 `.agt/` 支持文件和目录。CLI 层只做窄改动：`run` 使用更完整的 `TaskWorktree` 元数据写入 session index，`continue` 语义保持不变。
 
-**技术栈：** Python 3.13、`pytest`、现有 CLI 集成测试、`git worktree`、放在 `.agent-team/local/` 下的 JSON 本地配置，以及当前的 `StateStore` / workspace metadata 辅助函数。
+**技术栈：** Python 3.13、`pytest`、现有 CLI 集成测试、`git worktree`、放在 `.agt/local/` 下的 JSON 本地配置，以及当前的 `StateStore` / workspace metadata 辅助函数。
+
+---
+
+## 命名迁移前提
+
+这份计划默认采用新的目录命名基线：
+
+- `agt-control/`
+  - 仓库内共享、正式、可提交的 Agent Team 控制面。
+- `.agt/`
+  - 本地隐藏的运行态、私有配置、session 状态、memory、runtime trace。
+
+实现时不能一次性只改写新路径、不处理旧路径。必须保留一个兼容期：
+
+- 读取时兼容旧的 `agent-team/` 和 `.agent-team/`
+- 新写入优先落到 `agt-control/` 和 `.agt/`
+- 在 worktree 方案真正启用前，先完成根目录命名迁移的最小兼容层
 
 ---
 
 ## 计划文件映射
 
+- `agent_team/harness_paths.py`
+  - 把默认本地状态根从 `.agent-team` 切到 `.agt`，并作为兼容迁移入口。
+- `agent_team/project_structure.py`
+  - 把共享控制面根从 `agent-team/` 切到 `agt-control/`，并兼容探测旧目录。
 - `agent_team/worktree_policy.py`
-  - 新增本地策略模型与加载器，负责读取 `.agent-team/local/worktree-policy.json`，并提供确定性的需求摘要 slug 和策略快照输出。
+  - 新增本地策略模型与加载器，负责读取 `.agt/local/worktree-policy.json`，并提供确定性的需求摘要 slug 和策略快照输出。
 - `agent_team/worktree_sessions.py`
   - 负责解析 clean base ref、按策略创建 branch/worktree、复制 AGT 支持状态，并写入更完整的 session-index 元数据。
 - `agent_team/cli.py`
@@ -28,14 +49,90 @@
   - 更新 `run` / `continue` 集成覆盖，校验 `feature/` 分支命名、clean base 选择、复制的支持状态、以及新的 session-index 字段。
 - `tests/test_docs.py`
   - 断言 README 已记录本地 worktree 策略和 AGT 状态复制规则。
+- `tests/test_harness_paths.py`
+  - 校验默认 state root 已切换为 `.agt`，并覆盖兼容场景。
+- `tests/test_project_structure.py`
+  - 校验共享控制面根已切到 `agt-control/`，同时仍能识别旧的 `agent-team/`。
 
 ## 实施约束
 
 - 在创建 task worktree 时，不要调用 `agent-team init`。
-- 在创建 worktree 时，不要生成或改写 `agent-team/project/`、`docs/product-definition/`、`docs/project-runtime/`、`docs/governance/` 这类仓库正式文档。
-- 当源工作区中存在这些内容时，要复制 `.agent-team/executor-env.json`、`.agent-team/skill-preferences.yaml`、`.agent-team/local/`、`.agent-team/memory/` 到新 worktree。
-- 不要把 `.agent-team/session-index.json`、`.agent-team/_runtime/`、`.agent-team/sessions/`、或历史 session 产物复制到新 worktree。
+- 不要把 `agt-control/` 与 `.agt/` 的命名迁移省略掉，只实现 worktree 逻辑。
+- 在迁移完成前，必须兼容旧的 `agent-team/` 与 `.agent-team/` 读取。
+- 在创建 worktree 时，不要生成或改写 `agt-control/project/`、`docs/product-definition/`、`docs/project-runtime/`、`docs/governance/` 这类仓库正式文档。
+- 当源工作区中存在这些内容时，要复制 `.agt/executor-env.json`、`.agt/skill-preferences.yaml`、`.agt/local/`、`.agt/memory/` 到新 worktree。
+- 不要把 `.agt/session-index.json`、`.agt/_runtime/`、`.agt/sessions/`、或历史 session 产物复制到新 worktree。
 - 必须保持现有 `continue` 语义：它只能重新打开已记录的 worktree，不能新建 worktree。
+
+### 任务 0：建立新旧目录命名的兼容迁移层
+
+**文件：**
+- 修改：`agent_team/harness_paths.py`
+- 修改：`agent_team/project_structure.py`
+- 测试：`tests/test_harness_paths.py`
+- 测试：`tests/test_project_structure.py`
+
+- [ ] **步骤 1：先写失败测试，明确新的默认根目录和旧目录兼容要求**
+
+```python
+def test_default_state_root_prefers_dot_agt(self) -> None:
+    from agent_team.harness_paths import default_state_root
+
+    repo_root = Path("/tmp/example-repo")
+    self.assertEqual(default_state_root(repo_root=repo_root), repo_root.resolve() / ".agt")
+
+
+def test_detect_project_structure_prefers_agt_control_root(self) -> None:
+    repo_root = Path(temp_dir) / "repo"
+    (repo_root / "agt-control" / "project").mkdir(parents=True)
+    structure = detect_project_structure(repo_root)
+    self.assertEqual(structure.agent_team_root, repo_root / "agt-control")
+
+
+def test_detect_project_structure_falls_back_to_legacy_agent_team_root(self) -> None:
+    repo_root = Path(temp_dir) / "repo"
+    (repo_root / "agent-team" / "project").mkdir(parents=True)
+    structure = detect_project_structure(repo_root)
+    self.assertEqual(structure.agent_team_root, repo_root / "agent-team")
+```
+
+- [ ] **步骤 2：运行兼容迁移测试，确认在实现前先失败**
+
+运行：`pytest tests/test_harness_paths.py tests/test_project_structure.py -q`
+
+预期：FAIL，暴露当前默认根仍然是 `.agent-team`，且共享控制面仍然只认 `agent-team/`。
+
+- [ ] **步骤 3：实现最小兼容层，写入新路径、读取兼容旧路径**
+
+```python
+def default_state_root(*, repo_root: Path, codex_home: Path | None = None) -> Path:
+    del codex_home
+    return repo_root.resolve() / ".agt"
+```
+
+```python
+def detect_project_structure(repo_root: Path) -> ProjectStructure:
+    repo_root = repo_root.resolve()
+    preferred_root = repo_root / "agt-control"
+    legacy_root = repo_root / "agent-team"
+    agent_team_root = preferred_root if preferred_root.exists() or not legacy_root.exists() else legacy_root
+    project_root = agent_team_root / "project"
+    doc_map_path = project_root / "doc-map.json"
+    ...
+```
+
+- [ ] **步骤 4：重新运行兼容迁移测试，确认通过**
+
+运行：`pytest tests/test_harness_paths.py tests/test_project_structure.py -q`
+
+预期：PASS，且新的默认目录基线已经固定为 `agt-control/` 与 `.agt/`。
+
+- [ ] **步骤 5：提交这一小段兼容迁移**
+
+```bash
+git add agent_team/harness_paths.py agent_team/project_structure.py tests/test_harness_paths.py tests/test_project_structure.py
+git commit -m "refactor: rename agent team control and state roots"
+```
 
 ### 任务 1：增加本地 Worktree 策略加载器与 Slug 规则
 
@@ -62,7 +159,7 @@ class WorktreePolicyTests(unittest.TestCase):
         from agent_team.worktree_policy import load_worktree_policy
 
         with TemporaryDirectory(dir=local_temp_dir()) as temp_dir:
-            state_root = Path(temp_dir) / ".agent-team"
+            state_root = Path(temp_dir) / ".agt"
             policy = load_worktree_policy(state_root)
 
             self.assertEqual(policy.base_ref_candidates, ("origin/test", "origin/main", "test", "main"))
@@ -77,7 +174,7 @@ class WorktreePolicyTests(unittest.TestCase):
         from agent_team.worktree_policy import load_worktree_policy, worktree_policy_path
 
         with TemporaryDirectory(dir=local_temp_dir()) as temp_dir:
-            state_root = Path(temp_dir) / ".agent-team"
+            state_root = Path(temp_dir) / ".agt"
             path = worktree_policy_path(state_root)
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(
@@ -105,7 +202,7 @@ class WorktreePolicyTests(unittest.TestCase):
         from agent_team.worktree_policy import load_worktree_policy, worktree_policy_path
 
         with TemporaryDirectory(dir=local_temp_dir()) as temp_dir:
-            state_root = Path(temp_dir) / ".agent-team"
+            state_root = Path(temp_dir) / ".agt"
             path = worktree_policy_path(state_root)
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("{not-json")
@@ -354,12 +451,12 @@ class WorktreeSessionTests(unittest.TestCase):
             self.assertEqual(worktree.base_ref, "test")
             self.assertRegex(worktree.branch, r"^feature/\d{8}-add-login-button$")
             self.assertEqual((worktree.path / "README.md").read_text(), "# clean test branch\n")
-            self.assertTrue((worktree.path / ".agent-team" / "executor-env.json").exists())
-            self.assertTrue((worktree.path / ".agent-team" / "skill-preferences.yaml").exists())
-            self.assertTrue((worktree.path / ".agent-team" / "local" / "verification-private.json").exists())
-            self.assertTrue((worktree.path / ".agent-team" / "memory" / "Implementation" / "lessons.md").exists())
-            self.assertFalse((worktree.path / ".agent-team" / "_runtime").exists())
-            self.assertFalse((worktree.path / ".agent-team" / "session-index.json").exists())
+            self.assertTrue((worktree.path / ".agt" / "executor-env.json").exists())
+            self.assertTrue((worktree.path / ".agt" / "skill-preferences.yaml").exists())
+            self.assertTrue((worktree.path / ".agt" / "local" / "verification-private.json").exists())
+            self.assertTrue((worktree.path / ".agt" / "memory" / "Implementation" / "lessons.md").exists())
+            self.assertFalse((worktree.path / ".agt" / "_runtime").exists())
+            self.assertFalse((worktree.path / ".agt" / "session-index.json").exists())
 
     def test_create_task_worktree_adds_unique_suffix_when_names_collide(self) -> None:
         from agent_team.harness_paths import default_state_root
@@ -546,7 +643,7 @@ def test_run_uses_clean_base_policy_and_continue_reuses_created_worktree(self) -
         subprocess.run(["git", "commit", "-am", "baseline"], cwd=repo_root, capture_output=True, text=True, check=True)
         subprocess.run(["git", "checkout", "-b", "feature/current"], cwd=repo_root, capture_output=True, text=True, check=True)
 
-        state_root = repo_root / ".agent-team"
+        state_root = repo_root / ".agt"
         (state_root / "local").mkdir(parents=True, exist_ok=True)
         (state_root / "local" / "worktree-policy.json").write_text(
             json.dumps(
@@ -585,15 +682,15 @@ def test_run_uses_clean_base_policy_and_continue_reuses_created_worktree(self) -
         self.assertIn("add-login-button", output)
         session_id = _session_id_from_stdout(output)
 
-        entry = json.loads((repo_root / ".agent-team" / "session-index.json").read_text())["sessions"][0]
+        entry = json.loads((repo_root / ".agt" / "session-index.json").read_text())["sessions"][0]
         worktree_path = Path(entry["worktree_path"])
         self.assertEqual(entry["base_ref"], "test")
         self.assertTrue(entry["base_commit"])
         self.assertEqual(entry["worktree_policy_source"], "local_file")
         self.assertEqual(entry["naming_source"], "request_summary")
-        self.assertTrue((worktree_path / ".agent-team" / "skill-preferences.yaml").exists())
-        self.assertTrue((worktree_path / ".agent-team" / "memory" / "Implementation" / "lessons.md").exists())
-        self.assertFalse((worktree_path / ".agent-team" / "_runtime").exists())
+        self.assertTrue((worktree_path / ".agt" / "skill-preferences.yaml").exists())
+        self.assertTrue((worktree_path / ".agt" / "memory" / "Implementation" / "lessons.md").exists())
+        self.assertFalse((worktree_path / ".agt" / "_runtime").exists())
 
         continue_stdout = io.StringIO()
         with patch("sys.stdout", continue_stdout):
@@ -739,14 +836,14 @@ def test_readme_documents_task_worktree_policy(self) -> None:
     readme = (repo_root / "README.md").read_text()
 
     self.assertIn("Task worktrees", readme)
-    self.assertIn(".agent-team/local/worktree-policy.json", readme)
+    self.assertIn(".agt/local/worktree-policy.json", readme)
     self.assertIn("feature/<date>-<slug>", readme)
     self.assertIn('["origin/test", "origin/main", "test", "main"]', readme)
-    self.assertIn(".agent-team/executor-env.json", readme)
-    self.assertIn(".agent-team/skill-preferences.yaml", readme)
-    self.assertIn(".agent-team/memory/", readme)
-    self.assertIn(".agent-team/session-index.json", readme)
-    self.assertIn(".agent-team/_runtime/", readme)
+    self.assertIn(".agt/executor-env.json", readme)
+    self.assertIn(".agt/skill-preferences.yaml", readme)
+    self.assertIn(".agt/memory/", readme)
+    self.assertIn(".agt/session-index.json", readme)
+    self.assertIn(".agt/_runtime/", readme)
 ```
 
 - [ ] **步骤 2：运行文档测试，确认 README 目前还没有这段说明**
@@ -765,7 +862,7 @@ def test_readme_documents_task_worktree_policy(self) -> None:
 本地策略文件：
 
 ```text
-.agent-team/local/worktree-policy.json
+.agt/local/worktree-policy.json
 ```
 
 默认 clean base ref 候选顺序：
@@ -782,15 +879,15 @@ feature/<date>-<slug>
 
 新 worktree 会复制这些 AGT 本地支持状态：
 
-- `.agent-team/executor-env.json`
-- `.agent-team/skill-preferences.yaml`
-- `.agent-team/local/`
-- `.agent-team/memory/`
+- `.agt/executor-env.json`
+- `.agt/skill-preferences.yaml`
+- `.agt/local/`
+- `.agt/memory/`
 
 新 worktree 不会复制这些运行历史：
 
-- `.agent-team/session-index.json`
-- `.agent-team/_runtime/`
+- `.agt/session-index.json`
+- `.agt/_runtime/`
 - 历史 session 产物
 ````
 
