@@ -1,49 +1,49 @@
-# Task Worktree Policy Implementation Plan
+# 任务级 Worktree 策略实施计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **给执行型 agent：** 必须使用 `superpowers:subagent-driven-development`（推荐）或 `superpowers:executing-plans` 按任务逐步执行本计划。步骤使用复选框语法（`- [ ]`）跟踪。
 
-**Goal:** Make each new `agent-team run` start from a clean configurable base ref in its own minimal branch/worktree, while keeping repository-owned five-layer docs untouched and copying only the AGT local support state into the new worktree.
+**目标：** 让每次新的 `agent-team run` 都从一个可配置的干净 base ref 拉出独立的最小分支和 worktree，同时不碰仓库内的五层正式文档，只把 AGT 的本地支持状态复制到新 worktree。
 
-**Architecture:** Add one small policy loader for `.agent-team/local/worktree-policy.json`, then route all worktree creation through `agent_team/worktree_sessions.py` so it can resolve clean base refs, generate ASCII branch names, and copy only the allowed `.agent-team/` support files and directories. Keep CLI changes narrow: `run` should consume the richer `TaskWorktree` metadata, persist new session-index fields, and leave `continue` unchanged.
+**架构：** 先增加一个很小的本地策略加载器，读取 `.agent-team/local/worktree-policy.json`；然后把 worktree 创建逻辑统一收口到 `agent_team/worktree_sessions.py`，负责解析 clean base ref、生成 ASCII 分支名、复制允许继承的 `.agent-team/` 支持文件和目录。CLI 层只做窄改动：`run` 使用更完整的 `TaskWorktree` 元数据写入 session index，`continue` 语义保持不变。
 
-**Tech Stack:** Python 3.13, `pytest`, existing CLI integration tests, `git worktree`, JSON-based local config under `.agent-team/local/`, and the current `StateStore` / workspace metadata helpers.
+**技术栈：** Python 3.13、`pytest`、现有 CLI 集成测试、`git worktree`、放在 `.agent-team/local/` 下的 JSON 本地配置，以及当前的 `StateStore` / workspace metadata 辅助函数。
 
 ---
 
-## Planned File Map
+## 计划文件映射
 
 - `agent_team/worktree_policy.py`
-  - New local-policy model and loader for `.agent-team/local/worktree-policy.json`, plus deterministic request-to-slug summarization and snapshot rendering.
+  - 新增本地策略模型与加载器，负责读取 `.agent-team/local/worktree-policy.json`，并提供确定性的需求摘要 slug 和策略快照输出。
 - `agent_team/worktree_sessions.py`
-  - Resolve clean base refs, create branches/worktrees from policy, copy AGT support state, and persist richer session-index metadata.
+  - 负责解析 clean base ref、按策略创建 branch/worktree、复制 AGT 支持状态，并写入更完整的 session-index 元数据。
 - `agent_team/cli.py`
-  - Switch `run` workspace preparation from tuple metadata to full `TaskWorktree` metadata and keep `continue` behavior unchanged.
+  - 把 `run` 的工作区准备逻辑从“只返回几个字符串”改成“返回完整 `TaskWorktree` 元数据”，`continue` 行为保持不变。
 - `README.md`
-  - Document the new task-worktree behavior, the local policy file path, what AGT state is copied, and what runtime history is intentionally excluded.
+  - 记录新的 task-worktree 行为、本地策略文件路径、哪些 AGT 状态会复制、哪些 runtime 历史不会复制。
 - `tests/test_worktree_policy.py`
-  - New focused unit tests for builtin defaults, invalid local JSON, and deterministic slug generation.
+  - 新增聚焦单测，覆盖内建默认值、非法本地 JSON、确定性 slug 生成。
 - `tests/test_worktree_sessions.py`
-  - New focused tests for clean-base fallback, worktree naming, copied AGT support state, and non-copied runtime history.
+  - 新增聚焦测试，覆盖 clean-base fallback、worktree 命名、复制的 AGT 支持状态、以及不会复制的 runtime 历史。
 - `tests/test_cli.py`
-  - Update `run` / `continue` integration coverage for `feature/` branch names, clean base selection, copied support state, and new session-index fields.
+  - 更新 `run` / `continue` 集成覆盖，校验 `feature/` 分支命名、clean base 选择、复制的支持状态、以及新的 session-index 字段。
 - `tests/test_docs.py`
-  - Assert README documents the local worktree policy and AGT-state copy rules.
+  - 断言 README 已记录本地 worktree 策略和 AGT 状态复制规则。
 
-## Implementation Constraints
+## 实施约束
 
-- Do not call `agent-team init` during task worktree creation.
-- Do not generate or rewrite `agent-team/project/`, `docs/product-definition/`, `docs/project-runtime/`, or `docs/governance/` while creating a worktree.
-- Do copy `.agent-team/executor-env.json`, `.agent-team/skill-preferences.yaml`, `.agent-team/local/`, and `.agent-team/memory/` into the new worktree when present.
-- Do not copy `.agent-team/session-index.json`, `.agent-team/_runtime/`, `.agent-team/sessions/`, or historical session artifacts into the new worktree.
-- Preserve existing `continue` semantics: it must reopen the recorded worktree, not create a new one.
+- 在创建 task worktree 时，不要调用 `agent-team init`。
+- 在创建 worktree 时，不要生成或改写 `agent-team/project/`、`docs/product-definition/`、`docs/project-runtime/`、`docs/governance/` 这类仓库正式文档。
+- 当源工作区中存在这些内容时，要复制 `.agent-team/executor-env.json`、`.agent-team/skill-preferences.yaml`、`.agent-team/local/`、`.agent-team/memory/` 到新 worktree。
+- 不要把 `.agent-team/session-index.json`、`.agent-team/_runtime/`、`.agent-team/sessions/`、或历史 session 产物复制到新 worktree。
+- 必须保持现有 `continue` 语义：它只能重新打开已记录的 worktree，不能新建 worktree。
 
-### Task 1: Add Local Worktree Policy Loader And Slug Rules
+### 任务 1：增加本地 Worktree 策略加载器与 Slug 规则
 
-**Files:**
-- Create: `agent_team/worktree_policy.py`
-- Test: `tests/test_worktree_policy.py`
+**文件：**
+- 新建：`agent_team/worktree_policy.py`
+- 测试：`tests/test_worktree_policy.py`
 
-- [ ] **Step 1: Write the failing unit tests for builtin defaults, local overrides, and slug fallback**
+- [ ] **步骤 1：先写失败测试，覆盖内建默认值、本地覆盖和 slug fallback**
 
 ```python
 import json
@@ -125,13 +125,13 @@ class WorktreePolicyTests(unittest.TestCase):
         self.assertEqual(fallback_source, "fallback_task")
 ```
 
-- [ ] **Step 2: Run the new unit tests and confirm they fail before implementation**
+- [ ] **步骤 2：运行新单测，确认在实现前先失败**
 
-Run: `pytest tests/test_worktree_policy.py -q`
+运行：`pytest tests/test_worktree_policy.py -q`
 
-Expected: FAIL with `ModuleNotFoundError: No module named 'agent_team.worktree_policy'`.
+预期：FAIL，并出现 `ModuleNotFoundError: No module named 'agent_team.worktree_policy'`。
 
-- [ ] **Step 3: Implement `agent_team/worktree_policy.py` with defaults, validation, and deterministic summarization**
+- [ ] **步骤 3：实现 `agent_team/worktree_policy.py`，补齐默认值、校验和确定性摘要**
 
 ```python
 from __future__ import annotations
@@ -268,26 +268,26 @@ def _normalized_branch_prefix(value: object) -> str:
     return prefix if prefix.endswith("/") else prefix + "/"
 ```
 
-- [ ] **Step 4: Re-run the policy tests and make sure they pass**
+- [ ] **步骤 4：重新运行策略测试，确认通过**
 
-Run: `pytest tests/test_worktree_policy.py -q`
+运行：`pytest tests/test_worktree_policy.py -q`
 
-Expected: PASS with `4 passed`.
+预期：PASS，并显示 `4 passed`。
 
-- [ ] **Step 5: Commit the policy loader slice**
+- [ ] **步骤 5：提交这一小段实现**
 
 ```bash
 git add agent_team/worktree_policy.py tests/test_worktree_policy.py
 git commit -m "feat: add local task worktree policy loader"
 ```
 
-### Task 2: Create Worktrees From Clean Base Refs And Copy Only AGT Support State
+### 任务 2：从 Clean Base Ref 创建 Worktree，并且只复制 AGT 支持状态
 
-**Files:**
-- Modify: `agent_team/worktree_sessions.py`
-- Test: `tests/test_worktree_sessions.py`
+**文件：**
+- 修改：`agent_team/worktree_sessions.py`
+- 测试：`tests/test_worktree_sessions.py`
 
-- [ ] **Step 1: Write failing tests for clean-base fallback, copied support state, and excluded runtime history**
+- [ ] **步骤 1：先写失败测试，覆盖 clean-base fallback、支持状态复制、以及 runtime 历史排除**
 
 ```python
 import json
@@ -352,7 +352,7 @@ class WorktreeSessionTests(unittest.TestCase):
             worktree = create_task_worktree(project_root=repo_root, source_state_root=state_root, message="新增 登录 按钮")
 
             self.assertEqual(worktree.base_ref, "test")
-            self.assertRegex(worktree.branch, r"^feature/\\d{8}-add-login-button$")
+            self.assertRegex(worktree.branch, r"^feature/\d{8}-add-login-button$")
             self.assertEqual((worktree.path / "README.md").read_text(), "# clean test branch\n")
             self.assertTrue((worktree.path / ".agent-team" / "executor-env.json").exists())
             self.assertTrue((worktree.path / ".agent-team" / "skill-preferences.yaml").exists())
@@ -366,19 +366,19 @@ class WorktreeSessionTests(unittest.TestCase):
         from agent_team.worktree_sessions import create_task_worktree
 
         with TemporaryDirectory(dir=local_temp_dir()) as temp_dir:
-        repo_root = Path(temp_dir) / "repo"
-        repo_root.mkdir()
-        subprocess.run(["git", "init"], cwd=repo_root, check=True, capture_output=True, text=True)
-        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo_root, check=True)
-        subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo_root, check=True)
-        (repo_root / "README.md").write_text("# test repo\n")
-        subprocess.run(["git", "add", "README.md"], cwd=repo_root, check=True, capture_output=True, text=True)
-        subprocess.run(["git", "commit", "-m", "initial"], cwd=repo_root, check=True, capture_output=True, text=True)
-        subprocess.run(["git", "branch", "-m", "main"], cwd=repo_root, check=True, capture_output=True, text=True)
+            repo_root = Path(temp_dir) / "repo"
+            repo_root.mkdir()
+            subprocess.run(["git", "init"], cwd=repo_root, check=True, capture_output=True, text=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo_root, check=True)
+            subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo_root, check=True)
+            (repo_root / "README.md").write_text("# test repo\n")
+            subprocess.run(["git", "add", "README.md"], cwd=repo_root, check=True, capture_output=True, text=True)
+            subprocess.run(["git", "commit", "-m", "initial"], cwd=repo_root, check=True, capture_output=True, text=True)
+            subprocess.run(["git", "branch", "-m", "main"], cwd=repo_root, check=True, capture_output=True, text=True)
 
-        state_root = default_state_root(repo_root=repo_root)
-        (state_root / "local").mkdir(parents=True, exist_ok=True)
-        (state_root / "local" / "worktree-policy.json").write_text(json.dumps({"base_ref_candidates": ["main"]}))
+            state_root = default_state_root(repo_root=repo_root)
+            (state_root / "local").mkdir(parents=True, exist_ok=True)
+            (state_root / "local" / "worktree-policy.json").write_text(json.dumps({"base_ref_candidates": ["main"]}))
 
             first = create_task_worktree(project_root=repo_root, source_state_root=state_root, message="fix api")
             second = create_task_worktree(project_root=repo_root, source_state_root=state_root, message="fix api")
@@ -388,13 +388,13 @@ class WorktreeSessionTests(unittest.TestCase):
             self.assertTrue(second.path.name.endswith("-2"))
 ```
 
-- [ ] **Step 2: Run the worktree session tests and confirm they fail on the current implementation**
+- [ ] **步骤 2：运行 worktree session 测试，确认它们先失败**
 
-Run: `pytest tests/test_worktree_sessions.py -q`
+运行：`pytest tests/test_worktree_sessions.py -q`
 
-Expected: FAIL with `TypeError` because `create_task_worktree()` does not accept `source_state_root`, plus assertions showing the current branch prefix and copied-state behavior do not match the new expectations.
+预期：FAIL，并出现 `TypeError`，因为当前 `create_task_worktree()` 还不接受 `source_state_root`；同时还会暴露当前分支前缀和复制行为不符合新预期。
 
-- [ ] **Step 3: Extend `worktree_sessions.py` to resolve clean base refs, copy support state, and persist richer metadata**
+- [ ] **步骤 3：扩展 `worktree_sessions.py`，补齐 clean base ref 解析、支持状态复制、以及更完整的元数据**
 
 ```python
 from __future__ import annotations
@@ -505,27 +505,27 @@ def create_task_worktree(*, project_root: Path, source_state_root: Path, message
     )
 ```
 
-- [ ] **Step 4: Re-run the focused worktree tests and make sure they pass**
+- [ ] **步骤 4：重新运行聚焦测试，确认通过**
 
-Run: `pytest tests/test_worktree_policy.py tests/test_worktree_sessions.py -q`
+运行：`pytest tests/test_worktree_policy.py tests/test_worktree_sessions.py -q`
 
-Expected: PASS with `6 passed`.
+预期：PASS，并显示 `6 passed`。
 
-- [ ] **Step 5: Commit the worktree creation slice**
+- [ ] **步骤 5：提交这一小段实现**
 
 ```bash
 git add agent_team/worktree_sessions.py tests/test_worktree_sessions.py
 git commit -m "feat: create task worktrees from configured clean bases"
 ```
 
-### Task 3: Wire The New Worktree Metadata Through The CLI And Session Index
+### 任务 3：把新的 Worktree 元数据接到 CLI 和 Session Index
 
-**Files:**
-- Modify: `agent_team/cli.py`
-- Modify: `agent_team/worktree_sessions.py`
-- Test: `tests/test_cli.py`
+**文件：**
+- 修改：`agent_team/cli.py`
+- 修改：`agent_team/worktree_sessions.py`
+- 测试：`tests/test_cli.py`
 
-- [ ] **Step 1: Update the CLI integration test to assert clean-base metadata and copied AGT support state**
+- [ ] **步骤 1：更新 CLI 集成测试，断言 clean-base 元数据和复制过来的 AGT 支持状态**
 
 ```python
 def test_run_uses_clean_base_policy_and_continue_reuses_created_worktree(self) -> None:
@@ -612,13 +612,13 @@ def test_run_uses_clean_base_policy_and_continue_reuses_created_worktree(self) -
         self.assertEqual(len(list((repo_root / ".worktrees").iterdir())), 1)
 ```
 
-- [ ] **Step 2: Run the focused CLI test and confirm it fails before the CLI wiring changes**
+- [ ] **步骤 2：运行聚焦 CLI 测试，确认在改 wiring 前先失败**
 
-Run: `pytest tests/test_cli.py -k "clean_base_policy and continue_reuses_created_worktree" -q`
+运行：`pytest tests/test_cli.py -k "clean_base_policy and continue_reuses_created_worktree" -q`
 
-Expected: FAIL because `branch: agent-team/` is still printed, `base_ref` metadata is missing, and only `executor-env.json` is currently copied into the new worktree.
+预期：FAIL，因为现在仍然会打印 `branch: agent-team/`，`base_ref` 元数据还不存在，而且当前只会复制 `executor-env.json`。
 
-- [ ] **Step 3: Change CLI workspace preparation to carry full `TaskWorktree` metadata into session-index writes**
+- [ ] **步骤 3：修改 CLI 工作区准备逻辑，让它把完整 `TaskWorktree` 元数据写进 session index**
 
 ```python
 from .worktree_sessions import TaskWorktree, create_task_worktree, find_session_index_entry, git_stdout, upsert_session_index_entry
@@ -708,30 +708,30 @@ def upsert_session_index_entry(
     }
 ```
 
-- [ ] **Step 4: Re-run the focused CLI tests and then the full worktree-related subset**
+- [ ] **步骤 4：重新运行 CLI 聚焦测试，然后运行完整的 worktree 相关测试子集**
 
-Run: `pytest tests/test_cli.py -k "clean_base_policy or continue_accepts_session_id_positional_alias" -q`
+运行：`pytest tests/test_cli.py -k "clean_base_policy or continue_accepts_session_id_positional_alias" -q`
 
-Expected: PASS with the updated branch prefix and session-index assertions.
+预期：PASS，并且新的分支前缀和 session-index 断言都成立。
 
-Run: `pytest tests/test_worktree_policy.py tests/test_worktree_sessions.py tests/test_cli.py -q`
+运行：`pytest tests/test_worktree_policy.py tests/test_worktree_sessions.py tests/test_cli.py -q`
 
-Expected: PASS with the new focused coverage and no regressions in the old `continue` alias test.
+预期：PASS，同时旧的 `continue` alias 测试不能回归。
 
-- [ ] **Step 5: Commit the CLI wiring slice**
+- [ ] **步骤 5：提交这一小段实现**
 
 ```bash
 git add agent_team/cli.py agent_team/worktree_sessions.py tests/test_cli.py
 git commit -m "feat: wire task worktree policy through cli"
 ```
 
-### Task 4: Document The New Local Policy And Copy Rules
+### 任务 4：补齐本地策略与复制规则的文档
 
-**Files:**
-- Modify: `README.md`
-- Modify: `tests/test_docs.py`
+**文件：**
+- 修改：`README.md`
+- 修改：`tests/test_docs.py`
 
-- [ ] **Step 1: Add a failing docs test for the new task worktree policy section**
+- [ ] **步骤 1：先加失败的文档测试，覆盖新的 task worktree 策略章节**
 
 ```python
 def test_readme_documents_task_worktree_policy(self) -> None:
@@ -749,13 +749,13 @@ def test_readme_documents_task_worktree_policy(self) -> None:
     self.assertIn(".agent-team/_runtime/", readme)
 ```
 
-- [ ] **Step 2: Run the docs tests and confirm the README is missing the new section**
+- [ ] **步骤 2：运行文档测试，确认 README 目前还没有这段说明**
 
-Run: `pytest tests/test_docs.py -q`
+运行：`pytest tests/test_docs.py -q`
 
-Expected: FAIL in `test_readme_documents_task_worktree_policy`.
+预期：FAIL，并在 `test_readme_documents_task_worktree_policy` 中失败。
 
-- [ ] **Step 3: Add a README section that explains the local policy path, clean base fallback, and copied AGT support state**
+- [ ] **步骤 3：给 README 增加一节，说明本地策略路径、clean base fallback、以及 AGT 支持状态复制规则**
 
 ````markdown
 ## Task worktrees
@@ -794,55 +794,55 @@ feature/<date>-<slug>
 - 历史 session 产物
 ````
 
-- [ ] **Step 4: Re-run the docs tests and make sure they pass**
+- [ ] **步骤 4：重新运行文档测试，确认通过**
 
-Run: `pytest tests/test_docs.py -q`
+运行：`pytest tests/test_docs.py -q`
 
-Expected: PASS with the new README assertions.
+预期：PASS，并满足新的 README 断言。
 
-- [ ] **Step 5: Commit the docs slice**
+- [ ] **步骤 5：提交这一小段文档改动**
 
 ```bash
 git add README.md tests/test_docs.py
 git commit -m "docs: document task worktree policy"
 ```
 
-### Task 5: Final Regression Sweep For The New Worktree Flow
+### 任务 5：做最终回归，确认新的 Worktree 流程稳定
 
-**Files:**
-- Modify: `agent_team/worktree_policy.py`
-- Modify: `agent_team/worktree_sessions.py`
-- Modify: `agent_team/cli.py`
-- Modify: `README.md`
-- Modify: `tests/test_worktree_policy.py`
-- Modify: `tests/test_worktree_sessions.py`
-- Modify: `tests/test_cli.py`
-- Modify: `tests/test_docs.py`
+**文件：**
+- 修改：`agent_team/worktree_policy.py`
+- 修改：`agent_team/worktree_sessions.py`
+- 修改：`agent_team/cli.py`
+- 修改：`README.md`
+- 修改：`tests/test_worktree_policy.py`
+- 修改：`tests/test_worktree_sessions.py`
+- 修改：`tests/test_cli.py`
+- 修改：`tests/test_docs.py`
 
-- [ ] **Step 1: Run the full focused regression suite for the new worktree feature**
+- [ ] **步骤 1：运行新功能的完整聚焦回归测试**
 
-Run: `pytest tests/test_worktree_policy.py tests/test_worktree_sessions.py tests/test_cli.py tests/test_docs.py -q`
+运行：`pytest tests/test_worktree_policy.py tests/test_worktree_sessions.py tests/test_cli.py tests/test_docs.py -q`
 
-Expected: PASS with all new and updated tests green.
+预期：PASS，所有新增和更新的测试都绿。
 
-- [ ] **Step 2: Run the broader runtime smoke tests that already cover workspace metadata and console grouping**
+- [ ] **步骤 2：运行更广一点的 runtime smoke tests**
 
-Run: `pytest tests/test_workspace_metadata.py tests/test_console_data.py tests/test_board.py -q`
+运行：`pytest tests/test_workspace_metadata.py tests/test_console_data.py tests/test_board.py -q`
 
-Expected: PASS, proving the new worktree naming and state-root behavior did not break existing workspace metadata consumers.
+预期：PASS，证明新的 worktree 命名和 state-root 行为没有破坏 workspace metadata 消费方。
 
-- [ ] **Step 3: If a regression appears, rerun only the failing test file after the targeted fix**
+- [ ] **步骤 3：如果有回归，只重新跑对应失败文件，直到针对性修复通过**
 
-Run one of:
+运行其中之一：
 
 - `pytest tests/test_worktree_policy.py -q`
 - `pytest tests/test_worktree_sessions.py -q`
 - `pytest tests/test_cli.py -q`
 - `pytest tests/test_docs.py -q`
 
-Expected: PASS for the previously failing file before creating the final commit.
+预期：之前失败的那个测试文件单独恢复 PASS，然后再继续最终提交。
 
-- [ ] **Step 4: Create the final implementation commit**
+- [ ] **步骤 4：创建最终实现提交**
 
 ```bash
 git add agent_team/worktree_policy.py agent_team/worktree_sessions.py agent_team/cli.py README.md \
@@ -850,16 +850,16 @@ git add agent_team/worktree_policy.py agent_team/worktree_sessions.py agent_team
 git commit -m "feat: isolate task runs with configurable clean worktrees"
 ```
 
-## Self-Review Checklist
+## 自检清单
 
-- Spec coverage:
-  - `L3` local policy path is implemented in Task 1.
-  - Clean base ref fallback is implemented and tested in Tasks 1 to 3.
-  - New worktree behaves like plain `git worktree` and does not regenerate repo-owned five-layer docs in Task 2.
-  - AGT support-state copying and runtime-history exclusion are implemented in Task 2 and verified again in Task 3.
-  - README/user-facing documentation is covered in Task 4.
-- Placeholder scan:
-  - No `TODO` / `TBD` markers remain.
-  - Every code-changing task includes concrete code blocks and exact test commands.
-- Type consistency:
-  - `TaskWorktree` fields, `upsert_session_index_entry()` parameters, and README field names match across all tasks.
+- 规格覆盖：
+  - `L3` 本地策略路径在任务 1 中实现。
+  - clean base ref fallback 在任务 1 到任务 3 中实现并测试。
+  - 新 worktree 像普通 `git worktree` 一样工作，且不会重建仓库正式五层文档，这一点在任务 2 中落实。
+  - AGT 支持状态复制和 runtime 历史排除，在任务 2 中实现，在任务 3 中再次验证。
+  - README / 用户侧说明在任务 4 中补齐。
+- 占位词扫描：
+  - 没有残留 `TODO` / `TBD`。
+  - 每个会改代码的任务都给了明确代码块和准确测试命令。
+- 类型一致性：
+  - `TaskWorktree` 字段、`upsert_session_index_entry()` 参数名、以及 README 里的字段名在整份计划中保持一致。
