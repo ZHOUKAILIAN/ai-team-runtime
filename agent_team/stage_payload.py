@@ -27,6 +27,13 @@ ALLOWED_STAGE_PAYLOAD_FIELDS = frozenset(
         "summary",
         "acceptance_status",
         "blocked_reason",
+        "route_required_stages",
+        "route_stage_decisions",
+        "verification_mode",
+        "product_definition_outcome",
+        "service_profile",
+        "flow_ids",
+        "evidence_paths",
     }
 )
 
@@ -67,6 +74,13 @@ def envelope_from_stage_payload(
         "summary": payload.get("summary", ""),
         "acceptance_status": payload.get("acceptance_status", ""),
         "blocked_reason": payload.get("blocked_reason", ""),
+        "route_required_stages": payload.get("route_required_stages", []),
+        "route_stage_decisions": payload.get("route_stage_decisions", {}),
+        "verification_mode": payload.get("verification_mode", ""),
+        "product_definition_outcome": payload.get("product_definition_outcome", ""),
+        "service_profile": payload.get("service_profile", ""),
+        "flow_ids": payload.get("flow_ids", []),
+        "evidence_paths": payload.get("evidence_paths", []),
         "supplemental_artifacts": {},
     }
     return StageResultEnvelope.from_dict(envelope_payload)

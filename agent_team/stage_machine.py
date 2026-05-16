@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 
 from .models import StageResultEnvelope, WorkflowSummary
-from .workflow import HUMAN_REWORK_TARGETS, STAGES, WAIT_STATES
+from .workflow import HUMAN_REWORK_TARGETS, WAIT_STATES, next_required_stage, ordered_required_stages
 
 
 INTERACTIVE_RUNTIME_MODES = {"runtime_driver_interactive"}
@@ -32,15 +33,38 @@ class StageMachine:
             )
 
         if stage_result.stage == "Route":
-            return _set_stage_status(
+            required_stages, stage_decisions, verification_mode = _parse_route_packet(stage_result)
+            next_stage = next_required_stage(required_stages=required_stages, after_stage="Route")
+            updated = _set_stage_status(
                 summary,
                 "Route",
                 "completed",
-                current_state="ProductDefinition",
-                current_stage="ProductDefinition",
+                current_state=next_stage or "Done",
+                current_stage=next_stage or "Route",
+                route_required_stages=required_stages,
+                route_stage_decisions=stage_decisions,
+                verification_mode=verification_mode,
             )
+            for stage_name, item in stage_decisions.items():
+                if item.get("decision") == "skipped":
+                    updated = _set_stage_status(updated, stage_name, "skipped")
+            return updated
 
         if stage_result.stage == "ProductDefinition":
+            outcome = stage_result.product_definition_outcome or "l1_delta_pending_approval"
+            if outcome == "no_l1_delta":
+                next_stage = next_required_stage(
+                    required_stages=summary.route_required_stages,
+                    after_stage="ProductDefinition",
+                )
+                return _set_stage_status(
+                    summary,
+                    "ProductDefinition",
+                    "skipped",
+                    current_state=next_stage or "Done",
+                    current_stage=next_stage or "ProductDefinition",
+                    product_definition_outcome=outcome,
+                )
             return _set_stage_status(
                 summary,
                 "ProductDefinition",
@@ -48,6 +72,7 @@ class StageMachine:
                 current_state="WaitForProductDefinitionApproval",
                 current_stage="ProductDefinition",
                 human_decision="pending",
+                product_definition_outcome=outcome,
             )
 
         if stage_result.stage == "ProjectRuntime":
@@ -243,6 +268,17 @@ class StageMachine:
 
 def _is_interactive_runtime(summary: WorkflowSummary) -> bool:
     return summary.runtime_mode in INTERACTIVE_RUNTIME_MODES
+
+
+def _parse_route_packet(stage_result: StageResultEnvelope) -> tuple[list[str], dict[str, dict[str, str]], str]:
+    payload = json.loads(stage_result.artifact_content)
+    required_stages = ordered_required_stages(list(payload.get("required_stages", [])))
+    stage_decisions = {
+        str(name): {str(key): str(value) for key, value in dict(item).items()}
+        for name, item in dict(payload.get("stage_decisions", {})).items()
+    }
+    verification_mode = str(payload.get("verification_mode", ""))
+    return required_stages, stage_decisions, verification_mode
 
 
 def _set_stage_status(summary: WorkflowSummary, stage: str, status: str, **changes: object) -> WorkflowSummary:
