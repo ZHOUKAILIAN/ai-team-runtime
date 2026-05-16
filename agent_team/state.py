@@ -202,9 +202,25 @@ class StateStore:
         artifact_paths_value = payload.get("artifact_paths", {})
         artifact_paths = artifact_paths_value if isinstance(artifact_paths_value, dict) else {}
         raw_stage_statuses = payload.get("stage_statuses", {})
+        raw_route_required_stages = payload.get("route_required_stages", [])
+        raw_route_stage_decisions = payload.get("route_stage_decisions", {})
         stage_statuses = (
             {str(key): str(value) for key, value in raw_stage_statuses.items()}
             if isinstance(raw_stage_statuses, dict)
+            else {}
+        )
+        route_required_stages = (
+            [str(stage) for stage in raw_route_required_stages]
+            if isinstance(raw_route_required_stages, list)
+            else []
+        )
+        route_stage_decisions = (
+            {
+                str(stage): {str(key): str(value) for key, value in dict(item).items()}
+                for stage, item in raw_route_stage_decisions.items()
+                if isinstance(item, dict)
+            }
+            if isinstance(raw_route_stage_decisions, dict)
             else {}
         )
         legacy_status_map = {
@@ -226,6 +242,10 @@ class StateStore:
             verification_round=int(payload.get("verification_round", payload.get("qa_round", 0)) or 0),
             blocked_reason=str(payload.get("blocked_reason", "")),
             artifact_paths={str(key): str(value) for key, value in artifact_paths.items()},
+            route_required_stages=route_required_stages,
+            route_stage_decisions=route_stage_decisions,
+            verification_mode=str(payload.get("verification_mode", "")),
+            product_definition_outcome=str(payload.get("product_definition_outcome", "")),
         )
 
     def load_acceptance_contract(self, session_id: str) -> AcceptanceContract | None:

@@ -8,6 +8,16 @@ from .workflow import HUMAN_REWORK_TARGETS, WAIT_STATES, next_required_stage, or
 
 
 INTERACTIVE_RUNTIME_MODES = {"runtime_driver_interactive"}
+FIXED_SUCCESSORS = {
+    "Route": "ProductDefinition",
+    "ProductDefinition": "ProjectRuntime",
+    "ProjectRuntime": "TechnicalDesign",
+    "TechnicalDesign": "Implementation",
+    "Implementation": "Verification",
+    "Verification": "GovernanceReview",
+    "GovernanceReview": "Acceptance",
+    "Acceptance": "SessionHandoff",
+}
 
 
 class StageTransitionError(ValueError):
@@ -34,13 +44,13 @@ class StageMachine:
 
         if stage_result.stage == "Route":
             required_stages, stage_decisions, verification_mode = _parse_route_packet(stage_result)
-            next_stage = next_required_stage(required_stages=required_stages, after_stage="Route")
+            next_state, next_stage = _transition_to_next_stage(required_stages=required_stages, after_stage="Route")
             updated = _set_stage_status(
                 summary,
                 "Route",
                 "completed",
-                current_state=next_stage or "Done",
-                current_stage=next_stage or "Route",
+                current_state=next_state,
+                current_stage=next_stage,
                 route_required_stages=required_stages,
                 route_stage_decisions=stage_decisions,
                 verification_mode=verification_mode,
@@ -53,7 +63,7 @@ class StageMachine:
         if stage_result.stage == "ProductDefinition":
             outcome = stage_result.product_definition_outcome or "l1_delta_pending_approval"
             if outcome == "no_l1_delta":
-                next_stage = next_required_stage(
+                next_state, next_stage = _transition_to_next_stage(
                     required_stages=summary.route_required_stages,
                     after_stage="ProductDefinition",
                 )
@@ -61,46 +71,79 @@ class StageMachine:
                     summary,
                     "ProductDefinition",
                     "skipped",
-                    current_state=next_stage or "Done",
-                    current_stage=next_stage or "ProductDefinition",
+                    current_state=next_state,
+                    current_stage=next_stage,
                     product_definition_outcome=outcome,
                 )
+            if _requires_approval_wait(summary.route_required_stages, "ProductDefinition"):
+                return _set_stage_status(
+                    summary,
+                    "ProductDefinition",
+                    "drafted",
+                    current_state="WaitForProductDefinitionApproval",
+                    current_stage="ProductDefinition",
+                    human_decision="pending",
+                    product_definition_outcome=outcome,
+                )
+            next_state, next_stage = _transition_to_next_stage(
+                required_stages=summary.route_required_stages,
+                after_stage="ProductDefinition",
+            )
             return _set_stage_status(
                 summary,
                 "ProductDefinition",
-                "drafted",
-                current_state="WaitForProductDefinitionApproval",
-                current_stage="ProductDefinition",
-                human_decision="pending",
+                "completed",
+                current_state=next_state,
+                current_stage=next_stage,
                 product_definition_outcome=outcome,
             )
 
         if stage_result.stage == "ProjectRuntime":
+            next_state, next_stage = _transition_to_next_stage(
+                required_stages=summary.route_required_stages,
+                after_stage="ProjectRuntime",
+            )
             return _set_stage_status(
                 summary,
                 "ProjectRuntime",
                 "completed",
-                current_state="TechnicalDesign",
-                current_stage="TechnicalDesign",
+                current_state=next_state,
+                current_stage=next_stage,
             )
 
         if stage_result.stage == "TechnicalDesign":
+            if _requires_approval_wait(summary.route_required_stages, "TechnicalDesign"):
+                return _set_stage_status(
+                    summary,
+                    "TechnicalDesign",
+                    "drafted",
+                    current_state="WaitForTechnicalDesignApproval",
+                    current_stage="TechnicalDesign",
+                    human_decision="pending",
+                )
+            next_state, next_stage = _transition_to_next_stage(
+                required_stages=summary.route_required_stages,
+                after_stage="TechnicalDesign",
+            )
             return _set_stage_status(
                 summary,
                 "TechnicalDesign",
-                "drafted",
-                current_state="WaitForTechnicalDesignApproval",
-                current_stage="TechnicalDesign",
-                human_decision="pending",
+                "completed",
+                current_state=next_state,
+                current_stage=next_stage,
             )
 
         if stage_result.stage == "Implementation":
+            next_state, next_stage = _transition_to_next_stage(
+                required_stages=summary.route_required_stages,
+                after_stage="Implementation",
+            )
             return _set_stage_status(
                 summary,
                 "Implementation",
                 "completed",
-                current_state="Verification",
-                current_stage="Verification",
+                current_state=next_state,
+                current_stage=next_stage,
             )
 
         if stage_result.stage == "Verification":
@@ -114,12 +157,16 @@ class StageMachine:
                     current_stage="Implementation",
                     verification_round=next_verification_round,
                 )
+            next_state, next_stage = _transition_to_next_stage(
+                required_stages=summary.route_required_stages,
+                after_stage="Verification",
+            )
             return _set_stage_status(
                 summary,
                 "Verification",
                 "passed",
-                current_state="GovernanceReview",
-                current_stage="GovernanceReview",
+                current_state=next_state,
+                current_stage=next_stage,
                 verification_round=next_verification_round,
             )
 
@@ -133,12 +180,16 @@ class StageMachine:
                     current_stage="GovernanceReview",
                     blocked_reason=stage_result.summary or "Governance review found blocking issues.",
                 )
+            next_state, next_stage = _transition_to_next_stage(
+                required_stages=summary.route_required_stages,
+                after_stage="GovernanceReview",
+            )
             return _set_stage_status(
                 summary,
                 "GovernanceReview",
                 "passed",
-                current_state="Acceptance",
-                current_stage="Acceptance",
+                current_state=next_state,
+                current_stage=next_stage,
             )
 
         if stage_result.stage == "Acceptance":
@@ -155,23 +206,35 @@ class StageMachine:
                     acceptance_status=acceptance_status,
                     blocked_reason=stage_result.summary or "Acceptance result is blocked.",
                 )
+            next_state, next_stage = _transition_to_next_stage(
+                required_stages=summary.route_required_stages,
+                after_stage="Acceptance",
+            )
             return _set_stage_status(
                 summary,
                 "Acceptance",
                 acceptance_status,
-                current_state="SessionHandoff",
-                current_stage="SessionHandoff",
+                current_state=next_state,
+                current_stage=next_stage,
                 acceptance_status=acceptance_status,
             )
 
         if stage_result.stage == "SessionHandoff":
+            if _requires_session_handoff_wait(summary.route_required_stages):
+                return _set_stage_status(
+                    summary,
+                    "SessionHandoff",
+                    "completed",
+                    current_state="WaitForHumanDecision",
+                    current_stage="SessionHandoff",
+                    human_decision="pending",
+                )
             return _set_stage_status(
                 summary,
                 "SessionHandoff",
                 "completed",
-                current_state="WaitForHumanDecision",
+                current_state="Done",
                 current_stage="SessionHandoff",
-                human_decision="pending",
             )
 
         raise StageTransitionError(f"Unsupported stage result: {stage_result.stage}")
@@ -189,12 +252,16 @@ class StageMachine:
 
         if summary.current_state == "WaitForProductDefinitionApproval":
             if normalized == "go":
+                next_state, next_stage = _transition_to_next_stage(
+                    required_stages=summary.route_required_stages,
+                    after_stage="ProductDefinition",
+                )
                 return _set_stage_status(
                     summary,
                     "ProductDefinition",
                     "approved",
-                    current_state="ProjectRuntime",
-                    current_stage="ProjectRuntime",
+                    current_state=next_state,
+                    current_stage=next_stage,
                     human_decision=normalized,
                 )
             if normalized == "rework":
@@ -215,12 +282,16 @@ class StageMachine:
 
         if summary.current_state == "WaitForTechnicalDesignApproval":
             if normalized == "go":
+                next_state, next_stage = _transition_to_next_stage(
+                    required_stages=summary.route_required_stages,
+                    after_stage="TechnicalDesign",
+                )
                 return _set_stage_status(
                     summary,
                     "TechnicalDesign",
                     "approved",
-                    current_state="Implementation",
-                    current_stage="Implementation",
+                    current_state=next_state,
+                    current_stage=next_stage,
                     human_decision=normalized,
                 )
             if normalized == "rework":
@@ -279,6 +350,27 @@ def _parse_route_packet(stage_result: StageResultEnvelope) -> tuple[list[str], d
     }
     verification_mode = str(payload.get("verification_mode", ""))
     return required_stages, stage_decisions, verification_mode
+
+
+def _requires_approval_wait(required_stages: list[str], stage: str) -> bool:
+    return not required_stages or stage in required_stages
+
+
+def _requires_session_handoff_wait(required_stages: list[str]) -> bool:
+    return _requires_approval_wait(required_stages, "SessionHandoff")
+
+
+def _transition_to_next_stage(*, required_stages: list[str], after_stage: str) -> tuple[str, str]:
+    next_stage = _next_stage_after(required_stages=required_stages, after_stage=after_stage)
+    if next_stage is None:
+        return "Done", after_stage
+    return next_stage, next_stage
+
+
+def _next_stage_after(*, required_stages: list[str], after_stage: str) -> str | None:
+    if required_stages:
+        return next_required_stage(required_stages=required_stages, after_stage=after_stage)
+    return FIXED_SUCCESSORS.get(after_stage)
 
 
 def _set_stage_status(summary: WorkflowSummary, stage: str, status: str, **changes: object) -> WorkflowSummary:

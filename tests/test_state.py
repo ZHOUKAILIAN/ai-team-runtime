@@ -73,6 +73,35 @@ class StateTests(unittest.TestCase):
             self.assertEqual(summary.human_decision, "pending")
             self.assertIn("workflow_summary", summary.artifact_paths)
 
+    def test_state_store_restores_route_metadata_from_workflow_summary(self) -> None:
+        from agent_team.models import WorkflowSummary
+        from agent_team.state import StateStore
+
+        with TemporaryDirectory(dir=local_temp_dir()) as temp_dir:
+            store = StateStore(Path(temp_dir))
+            session = store.create_session("route metadata")
+            summary = WorkflowSummary(
+                session_id=session.session_id,
+                runtime_mode="harness",
+                current_state="Verification",
+                current_stage="Verification",
+                route_required_stages=["TechnicalDesign", "Implementation", "Verification"],
+                route_stage_decisions={"ProductDefinition": {"decision": "skipped", "reason": "no_l1_delta"}},
+                verification_mode="static_only",
+                product_definition_outcome="no_l1_delta",
+            )
+
+            store.save_workflow_summary(session, summary)
+            loaded = store.load_workflow_summary(session.session_id)
+
+            self.assertEqual(loaded.route_required_stages, ["TechnicalDesign", "Implementation", "Verification"])
+            self.assertEqual(
+                loaded.route_stage_decisions,
+                {"ProductDefinition": {"decision": "skipped", "reason": "no_l1_delta"}},
+            )
+            self.assertEqual(loaded.verification_mode, "static_only")
+            self.assertEqual(loaded.product_definition_outcome, "no_l1_delta")
+
     def test_state_store_persists_codex_exec_resume_state(self) -> None:
         from agent_team.state import StateStore
 
