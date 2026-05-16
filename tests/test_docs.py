@@ -37,13 +37,27 @@ class DocsTests(unittest.TestCase):
         readme = (repo_root / "README.md").read_text()
 
         self.assertIn("Skill defaults and runtime workflow", readme)
-        self.assertIn(".agent-team/skill-preferences.yaml", readme)
+        self.assertIn(".agt/skill-preferences.yaml", readme)
         self.assertIn(
             "_runtime/sessions/<session-id>/roles/<role>/attempt-001/stage-results/<role>-stage-result.json",
             readme,
         )
         self.assertNotIn("<role>-run-state.json", readme)
         self.assertIn("details.skill_injection", readme)
+
+    def test_readme_documents_task_worktree_policy(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        readme = (repo_root / "README.md").read_text()
+
+        self.assertIn("Task worktrees", readme)
+        self.assertIn(".agt/local/worktree-policy.json", readme)
+        self.assertIn("feature/<date>-<slug>", readme)
+        self.assertIn('["origin/test", "origin/main", "test", "main"]', readme)
+        self.assertIn(".agt/executor-env.json", readme)
+        self.assertIn(".agt/skill-preferences.yaml", readme)
+        self.assertIn(".agt/memory/", readme)
+        self.assertIn(".agt/session-index.json", readme)
+        self.assertIn(".agt/_runtime/", readme)
 
     def test_readme_keeps_authoritative_team_workflow_contract(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]

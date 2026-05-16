@@ -9,7 +9,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from .execution_context import build_stage_execution_context
-from .executor_env import copy_executor_env_config_if_exists, ensure_executor_env_config
+from .executor_env import ensure_executor_env_config
 from .five_layer_init import DEFAULT_FIVE_LAYER_SKILL_SOURCE, run_five_layer_classification
 from .gatekeeper import evaluate_candidate
 from .harness_paths import default_state_root
@@ -29,6 +29,7 @@ from .workflow import (
 )
 from .workspace_metadata import refresh_workspace_metadata
 from .worktree_sessions import (
+    TaskWorktree,
     create_task_worktree,
     find_session_index_entry,
     git_stdout,
@@ -118,25 +119,24 @@ class RunRequirementBlockedSummary:
     blockers: list[str]
 
 
-def _prepare_new_run_workspace(args: argparse.Namespace, *, message: str) -> tuple[str, str]:
+def _prepare_new_run_workspace(args: argparse.Namespace, *, message: str) -> TaskWorktree | None:
     if args.state_root_explicit or args.session_id:
-        return "", ""
+        return None
+    source_state_root = default_state_root(repo_root=args.project_root).resolve()
     try:
-        worktree = create_task_worktree(project_root=args.project_root, message=message)
+        worktree = create_task_worktree(
+            project_root=args.project_root,
+            source_state_root=source_state_root,
+            message=message,
+        )
     except RuntimeError as exc:
         raise SystemExit(str(exc)) from exc
     args.repo_root = worktree.path
     args.state_root = default_state_root(repo_root=worktree.path).resolve()
-    copied_env_config = copy_executor_env_config_if_exists(
-        source_state_root=default_state_root(repo_root=args.project_root).resolve(),
-        target_state_root=args.state_root,
-    )
-    if copied_env_config is None:
-        ensure_executor_env_config(args.state_root)
     refresh_workspace_metadata(state_root=args.state_root, repo_root=args.repo_root)
     print(f"worktree_path: {worktree.path}")
     print(f"branch: {worktree.branch}")
-    return worktree.base_branch, worktree.base_head
+    return worktree
 
 
 def _resolve_continue_workspace(args: argparse.Namespace) -> tuple[str, str]:
@@ -167,8 +167,7 @@ def _record_run_index_result(
     args: argparse.Namespace,
     result,
     request: str = "",
-    base_branch: str = "",
-    base_head: str = "",
+    task_worktree: TaskWorktree | None = None,
 ) -> None:
     branch = git_stdout(args.repo_root, ["branch", "--show-current"])
     upsert_session_index_entry(
@@ -177,8 +176,15 @@ def _record_run_index_result(
         worktree_path=args.repo_root,
         state_root=args.state_root,
         branch=branch,
-        base_branch=base_branch,
-        base_head=base_head,
+        base_branch=task_worktree.base_branch if task_worktree else "",
+        base_head=task_worktree.base_head if task_worktree else "",
+        base_ref=task_worktree.base_ref if task_worktree else "",
+        base_commit=task_worktree.base_commit if task_worktree else "",
+        worktree_policy_source=task_worktree.worktree_policy_source if task_worktree else "",
+        worktree_policy_snapshot_path=(
+            str(task_worktree.worktree_policy_snapshot_path) if task_worktree else ""
+        ),
+        naming_source=task_worktree.naming_source if task_worktree else "",
         request=request,
         status=result.status,
         current_state=result.current_state,
@@ -338,8 +344,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--auto",
         action="store_true",
         help=(
-            "Automatically pass non-human intermediate stages. ProductDefinition approval, "
-            "TechnicalDesign approval, and final Go/No-Go remain human-gated."
+            "Automatically pass non-human intermediate stages. ProductDefinition approval remains human-gated "
+            "only when Route requires it; TechnicalDesign approval and final Go/No-Go remain human-gated."
         ),
     )
     run_requirement_parser.add_argument(
@@ -689,17 +695,15 @@ def _handle_run_requirement(args: argparse.Namespace) -> int:
     interactive = _run_requirement_should_be_interactive(args)
     message, session_id = _resolve_run_requirement_target(args, interactive=interactive)
     ensure_executor_env_config(args.state_root)
-    base_branch = ""
-    base_head = ""
+    task_worktree = None
     if message and not session_id and not getattr(args, "continue_run", False):
-        base_branch, base_head = _prepare_new_run_workspace(args, message=message)
+        task_worktree = _prepare_new_run_workspace(args, message=message)
     if interactive:
         return _handle_run_requirement_interactive(
             args,
             message=message,
             session_id=session_id,
-            base_branch=base_branch,
-            base_head=base_head,
+            task_worktree=task_worktree,
         )
 
     try:
@@ -717,14 +721,14 @@ def _handle_run_requirement(args: argparse.Namespace) -> int:
         args=args,
         result=result,
         request=message,
-        base_branch=base_branch,
-        base_head=base_head,
+        task_worktree=task_worktree,
     )
     _print_runtime_driver_result(result)
     store = StateStore(args.state_root)
     _print_stage_timings(store, result.session_id)
     if args.model_output != "off":
         summary = store.load_workflow_summary(result.session_id)
+        _print_product_definition_skip_note(summary)
         if result.status in {"blocked", "failed"}:
             _print_run_requirement_blocked_summary(
                 store=store,
@@ -818,8 +822,7 @@ def _handle_run_requirement_interactive(
     *,
     message: str,
     session_id: str,
-    base_branch: str = "",
-    base_head: str = "",
+    task_worktree: TaskWorktree | None = None,
 ) -> int:
     from .runtime_driver import RuntimeDriverError, run_requirement
 
@@ -878,8 +881,7 @@ def _handle_run_requirement_interactive(
             args=args,
             result=result,
             request=current_message,
-            base_branch=base_branch,
-            base_head=base_head,
+            task_worktree=task_worktree,
         )
 
         if not header_printed:
@@ -900,7 +902,7 @@ def _handle_run_requirement_interactive(
             summary=summary,
             model_output=args.model_output,
             result=result,
-            auto_approving=_run_requirement_should_auto_approve_stage(args, stage),
+            auto_approving=_run_requirement_should_auto_approve_stage(args, stage, summary),
         )
 
         if result.status in {"blocked", "failed"}:
@@ -925,7 +927,7 @@ def _handle_run_requirement_interactive(
         if result.status != "waiting_human":
             return 0
 
-        if _run_requirement_should_auto_approve_stage(args, stage):
+        if _run_requirement_should_auto_approve_stage(args, stage, summary):
             updated_summary = _apply_run_requirement_decision(
                 store=store,
                 summary=summary,
@@ -975,8 +977,70 @@ def _handle_run_requirement_interactive(
             return 0
 
 
-def _run_requirement_should_auto_approve_stage(args: argparse.Namespace, stage: str) -> bool:
-    return bool(args.auto) and stage not in {"ProductDefinition", "TechnicalDesign", "SessionHandoff"}
+def _product_definition_gate_skipped(summary: WorkflowSummary) -> bool:
+    stage_status = str(summary.stage_statuses.get("ProductDefinition", "")).strip().lower()
+    route_decision = summary.route_stage_decisions.get("ProductDefinition", {})
+    decision = str(route_decision.get("decision", "")).strip().lower()
+    outcome = str(summary.product_definition_outcome or "").strip().lower()
+    if stage_status == "skipped" or decision == "skipped":
+        return True
+    if outcome != "no_l1_delta":
+        return False
+    if decision == "required":
+        return False
+    if summary.route_required_stages:
+        return "ProductDefinition" not in summary.route_required_stages
+    return True
+
+
+def _product_definition_skip_reason(summary: WorkflowSummary) -> str:
+    route_decision = summary.route_stage_decisions.get("ProductDefinition", {})
+    reason = str(route_decision.get("reason", "")).strip()
+    if reason:
+        return reason
+    outcome = str(summary.product_definition_outcome or "").strip()
+    if outcome:
+        return outcome
+    return "no_l1_delta"
+
+
+def _product_definition_skip_summary_lines(summary: WorkflowSummary) -> list[str]:
+    if not _product_definition_gate_skipped(summary):
+        return []
+    reason = _product_definition_skip_reason(summary)
+    if reason == "no_l1_delta":
+        return [
+            "Route 判定本次需求无 L1 delta",
+            "已跳过 ProductDefinition 审批门，继续推进到下一个必需阶段",
+        ]
+    return [
+        f"Route 已跳过 ProductDefinition 审批门（{reason}）",
+        "流程继续推进到下一个必需阶段",
+    ]
+
+
+def _print_product_definition_skip_note(summary: WorkflowSummary) -> None:
+    if not _product_definition_gate_skipped(summary):
+        return
+    reason = _product_definition_skip_reason(summary)
+    if reason == "no_l1_delta":
+        print("product_definition: no_l1_delta (skipped approval gate; continue to next required stage)")
+        return
+    print(f"product_definition: skipped approval gate ({reason})")
+
+
+def _run_requirement_should_auto_approve_stage(
+    args: argparse.Namespace,
+    stage: str,
+    summary: WorkflowSummary | None = None,
+) -> bool:
+    if not args.auto:
+        return False
+    if stage in {"TechnicalDesign", "SessionHandoff"}:
+        return False
+    if stage == "ProductDefinition":
+        return summary is not None and _product_definition_gate_skipped(summary)
+    return True
 
 
 def _print_run_requirement_stage_banner(*, stage: str, completed: int) -> None:
@@ -1132,7 +1196,7 @@ def _print_run_requirement_stage_report(
     elif auto_approving:
         print(_run_requirement_auto_next_step_text(stage))
     else:
-        print(_run_requirement_next_step_text(stage))
+        print(_run_requirement_next_step_text(stage, summary))
     print("")
 
 
@@ -1206,7 +1270,12 @@ def _run_requirement_stage_summary_lines(
     *,
     auto_approving: bool = False,
 ) -> list[str]:
-    del summary
+    del auto_approving
+    prefix = (
+        _product_definition_skip_summary_lines(summary)
+        if stage in {"ProductDefinition", "ProjectRuntime", "TechnicalDesign"}
+        else []
+    )
     if stage == "Route":
         return [
             "已完成需求路由和五层影响判断",
@@ -1214,19 +1283,21 @@ def _run_requirement_stage_summary_lines(
             "已写入 route-packet.json",
         ]
     if stage == "ProductDefinition":
+        if prefix:
+            return prefix
         return [
             "已识别 L1 产品定义候选",
             "已把非 L1 内容下沉到对应层",
             "已写入 product-definition-delta.md",
         ]
     if stage == "ProjectRuntime":
-        return [
+        return prefix + [
             "已整理 L3 项目落地默认做法",
             "已检查未重写 L1 或伪装成 L4",
             "已写入 project-landing-delta.md",
         ]
     if stage == "TechnicalDesign":
-        return [
+        return prefix + [
             "已确认 L1/L3 delta 作为技术设计输入",
             "已拆分实现步骤和验证方式",
             "已写入 technical-design.md",
@@ -1265,10 +1336,14 @@ def _run_requirement_stage_summary_lines(
     ]
 
 
-def _run_requirement_next_step_text(stage: str) -> str:
+def _run_requirement_next_step_text(stage: str, summary: WorkflowSummary | None = None) -> str:
     if stage == "ProductDefinition":
+        if summary is not None and _product_definition_gate_skipped(summary):
+            return "本次需求无 L1 delta，ProductDefinition 审批门已跳过，继续推进到下一个必需阶段。"
         return "请打开 L1 delta 文档确认理解复述、澄清问题，以及哪些进入产品定义、哪些不是 L1。"
     if stage == "TechnicalDesign":
+        if summary is not None and _product_definition_gate_skipped(summary):
+            return "Route 已判定 no L1 delta，ProductDefinition 审批门已跳过；请直接确认技术设计文档中的方案理解复述、待确认问题、实现路径和验证方式是否通过。"
         return "请打开技术设计文档确认方案理解复述、待确认问题、实现路径和验证方式是否通过。"
     if stage == "SessionHandoff":
         return "请打开接力文档并确认最终决策。"
@@ -2424,6 +2499,7 @@ def _print_summary(summary: WorkflowSummary) -> None:
     print(f"current_stage: {summary.current_stage}")
     print(f"acceptance_status: {summary.acceptance_status}")
     print(f"human_decision: {summary.human_decision}")
+    _print_product_definition_skip_note(summary)
 
 
 def _load_acceptance_matrix(path: Path | None) -> list[dict[str, object]]:
