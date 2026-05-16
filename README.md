@@ -4,7 +4,7 @@
 
 ## 定位
 
-- 对外是 `agent-team` CLI 产品。
+- 对外主入口是 `agt` CLI，完整命令仍兼容 `agent-team`。
 - 对内是可扩展的 orchestration runtime。
 - 默认运行五层九阶段流程，而不是旧的 Product / Dev / QA 三角色串联。
 - 反馈、返工、证据、人工决策和本地接力都会沉淀成运行时资产。
@@ -41,21 +41,21 @@ Route -> ProductDefinition approval -> ProjectRuntime -> TechnicalDesign approva
 主要命令：
 
 ```bash
-agent-team init
-agent-team run --message "<你的需求>"
-agent-team status --session-id <session_id> [--verbose|--json]
-agent-team panel --session-id <session_id> [--json]
-agent-team verify-stage-result --session-id <session_id> [--dry-run]
-agent-team record-human-decision --session-id <session_id> --decision go
-agent-team record-feedback --session-id <session_id> --source-stage Verification --target-stage Implementation --issue "<issue>" --apply-rework
-agent-team skill list|show|preferences|default
+agt init
+agt run --message "<你的需求>"
+agt status --session-id <session_id> [--verbose|--json]
+agt panel --session-id <session_id> [--json]
+agt verify-stage-result --session-id <session_id> [--dry-run]
+agt record-human-decision --session-id <session_id> --decision go
+agt record-feedback --session-id <session_id> --source-stage Verification --target-stage Implementation --issue "<issue>" --apply-rework
+agt skill list|show|preferences|default
 ```
 
 初始化项目：
 
 ```bash
 cd /path/to/your/project
-agent-team init
+agt init
 ```
 
 `init` 会创建 `agt-control/project/five-layer/` 并准备五层分类 prompt。交互终端默认会尝试调用 `codex exec`，使用 GitHub skill source：
@@ -75,8 +75,8 @@ agt-control/project/five-layer/classification-prompt.md
 强制运行或跳过：
 
 ```bash
-agent-team init --five-layer-classification run
-agent-team init --five-layer-classification skip
+agt init --five-layer-classification run
+agt init --five-layer-classification skip
 ```
 
 ## 运行
@@ -84,25 +84,25 @@ agent-team init --five-layer-classification skip
 真实执行默认使用 `codex-exec`：
 
 ```bash
-agent-team run --message "写个js文件，并打印agent-team-runtime"
+agt run --message "写个js文件，并打印agent-team-runtime"
 ```
 
 离线验证 workflow 文件和 gate：
 
 ```bash
-agent-team run --message "写个js文件，并打印agent-team-runtime" --executor dry-run
+agt run --message "写个js文件，并打印agent-team-runtime" --executor dry-run
 ```
 
 `--auto` 只自动推进非人工 gate。`ProductDefinition`、`TechnicalDesign` 和最终 `SessionHandoff` 仍然需要人工决策：
 
 ```bash
-agent-team run --session-id <session_id> --executor dry-run --auto
-agent-team record-human-decision --session-id <session_id> --decision go
+agt run --session-id <session_id> --executor dry-run --auto
+agt record-human-decision --session-id <session_id> --decision go
 ```
 
 ## Task worktrees
 
-`agent-team run` 默认不会直接从当前 `HEAD` 继续做，而是先按 clean base 策略创建新的 task worktree 和最小 branch。
+`agt run` 默认不会直接从当前 `HEAD` 继续做，而是先按 clean base 策略创建新的 task worktree 和最小 branch。
 
 - 本地策略文件：`.agt/local/worktree-policy.json`
 - 默认 clean base fallback：`["origin/test", "origin/main", "test", "main"]`
@@ -163,19 +163,19 @@ _runtime/sessions/<session-id>/roles/<role>/attempt-001/command-outputs/<role>-c
 `.agt/skill-preferences.yaml` 保存每个阶段的默认 skill、上次选择和使用频率。
 
 ```bash
-agent-team skill list
-agent-team skill show security-audit
-agent-team skill preferences
-agent-team skill default Implementation plan
-agent-team skill default Verification security-audit
-agent-team skill default Acceptance e2e-coverage-guard
+agt skill list
+agt skill show security-audit
+agt skill preferences
+agt skill default Implementation plan
+agt skill default Verification security-audit
+agt skill default Acceptance e2e-coverage-guard
 ```
 
 单次覆盖：
 
 ```bash
-agent-team run --message "<你的需求>" --with-skills Implementation:plan --skip-skills Verification:security-audit
-agent-team run --message "<你的需求>" --skills-empty
+agt run --message "<你的需求>" --with-skills Implementation:plan --skip-skills Verification:security-audit
+agt run --message "<你的需求>" --skills-empty
 ```
 
 每次注入的 skill 会记录在 stage result 的 `steps[].details.skill_injection` 中，包含 skill 名称、source type、source ref、scope、delivery、installed path，以及是否进入 prompt。
