@@ -4,7 +4,7 @@ from tempfile import TemporaryDirectory
 
 
 class HarnessPathTests(unittest.TestCase):
-    def test_default_state_root_uses_repo_local_agent_team_directory(self) -> None:
+    def test_default_state_root_uses_repo_local_agt_directory(self) -> None:
         from agent_team.harness_paths import default_state_root
 
         repo_root = Path("/tmp/Demo Repo")
@@ -12,7 +12,7 @@ class HarnessPathTests(unittest.TestCase):
 
         state_root = default_state_root(repo_root=repo_root, codex_home=codex_home)
 
-        self.assertEqual(state_root, repo_root.resolve() / ".agent-team")
+        self.assertEqual(state_root, repo_root.resolve() / ".agt")
 
     def test_default_state_root_ignores_codex_home_environment_variable(self) -> None:
         from agent_team.harness_paths import default_state_root
@@ -20,7 +20,7 @@ class HarnessPathTests(unittest.TestCase):
         with TemporaryDirectory() as temp_dir:
             state_root = default_state_root(repo_root=Path(temp_dir) / "project")
 
-        self.assertEqual(state_root, (Path(temp_dir) / "project").resolve() / ".agent-team")
+        self.assertEqual(state_root, (Path(temp_dir) / "project").resolve() / ".agt")
 
 
 if __name__ == "__main__":
