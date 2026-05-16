@@ -1,14 +1,25 @@
 from __future__ import annotations
 
 import json
-import re
+import shutil
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from .harness_paths import default_state_root, resolve_state_root
+from .worktree_policy import (
+    WorktreePolicy,
+    load_worktree_policy,
+    render_worktree_policy_snapshot,
+    summarize_request_slug,
+    worktree_policy_path,
+)
+
 SESSION_INDEX_NAME = "session-index.json"
 TERMINAL_WORKFLOW_STATES = {"Done", "NoGo"}
+AGT_SUPPORT_FILES = ("executor-env.json", "skill-preferences.yaml")
+AGT_SUPPORT_DIRS = ("local", "memory")
 
 
 @dataclass(frozen=True, slots=True)
@@ -17,14 +28,23 @@ class TaskWorktree:
     branch: str
     base_branch: str
     base_head: str
+    base_ref: str
+    base_commit: str
+    worktree_policy_source: str
+    worktree_policy_snapshot_path: Path
+    naming_source: str
 
 
 def session_index_path(project_root: Path) -> Path:
-    return project_root.resolve() / ".agent-team" / SESSION_INDEX_NAME
+    return default_state_root(repo_root=project_root.resolve()) / SESSION_INDEX_NAME
+
+
+def _existing_session_index_path(project_root: Path) -> Path:
+    return resolve_state_root(repo_root=project_root.resolve()) / SESSION_INDEX_NAME
 
 
 def load_session_index(project_root: Path) -> dict[str, object]:
-    path = session_index_path(project_root)
+    path = _existing_session_index_path(project_root)
     if not path.exists():
         return {"sessions": []}
     try:
@@ -49,6 +69,11 @@ def upsert_session_index_entry(
     branch: str,
     base_branch: str = "",
     base_head: str = "",
+    base_ref: str = "",
+    base_commit: str = "",
+    worktree_policy_source: str = "",
+    worktree_policy_snapshot_path: str = "",
+    naming_source: str = "",
     request: str = "",
     status: str = "",
     current_state: str = "",
@@ -65,6 +90,11 @@ def upsert_session_index_entry(
         "branch": branch,
         "base_branch": base_branch,
         "base_head": base_head,
+        "base_ref": base_ref,
+        "base_commit": base_commit,
+        "worktree_policy_source": worktree_policy_source,
+        "worktree_policy_snapshot_path": worktree_policy_snapshot_path,
+        "naming_source": naming_source,
         "request": request,
         "status": status,
         "current_state": current_state,
@@ -102,13 +132,6 @@ def find_session_index_entry(project_root: Path, session_id: str = "") -> dict[s
     return sessions[-1] if sessions else None
 
 
-def slugify_run_intent(message: str, *, max_length: int = 48) -> str:
-    slug = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff]+", "-", message.strip()).strip("-").lower()
-    if not slug:
-        slug = "task"
-    return slug[:max_length].strip("-") or "task"
-
-
 def git(repo_root: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
     try:
         return subprocess.run(
@@ -128,33 +151,89 @@ def git_stdout(repo_root: Path, args: list[str]) -> str:
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
-def create_task_worktree(*, project_root: Path, message: str) -> TaskWorktree:
+def resolve_base_ref(project_root: Path, candidates: tuple[str, ...]) -> tuple[str, str]:
+    attempted: list[str] = []
+    for candidate in candidates:
+        attempted.append(candidate)
+        commit = git_stdout(project_root, ["rev-parse", "--verify", f"{candidate}^{{commit}}"])
+        if commit:
+            return candidate, commit
+    tried = ", ".join(attempted) or "<none>"
+    raise RuntimeError(f"No configured clean base ref could be resolved. Tried: {tried}")
+
+
+def copy_agent_team_support_state(
+    *,
+    source_state_root: Path,
+    target_state_root: Path,
+    policy: WorktreePolicy,
+) -> Path:
+    target_state_root.mkdir(parents=True, exist_ok=True)
+    for filename in AGT_SUPPORT_FILES:
+        source = source_state_root / filename
+        if source.exists():
+            destination = target_state_root / filename
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_text(source.read_text())
+
+    for directory in AGT_SUPPORT_DIRS:
+        source = source_state_root / directory
+        if source.is_dir():
+            shutil.copytree(source, target_state_root / directory, dirs_exist_ok=True)
+
+    snapshot_path = worktree_policy_path(target_state_root)
+    snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+    snapshot_path.write_text(render_worktree_policy_snapshot(policy))
+    return snapshot_path
+
+
+def create_task_worktree(*, project_root: Path, source_state_root: Path, message: str) -> TaskWorktree:
     project_root = project_root.resolve()
+    source_state_root = source_state_root.resolve()
     if git(project_root, ["rev-parse", "--is-inside-work-tree"]).returncode != 0:
         raise RuntimeError("run requires a git worktree so it can create an isolated task worktree.")
 
-    stamp = datetime.now().strftime("%Y%m%d-%H%M")
-    slug = slugify_run_intent(message)
-    worktrees_root = project_root / ".worktrees"
+    policy = load_worktree_policy(source_state_root)
+    base_ref, base_commit = resolve_base_ref(project_root, policy.base_ref_candidates)
+    stamp = datetime.now().strftime(policy.date_format)
+    slug, naming_source = summarize_request_slug(message, max_length=policy.slug_max_length)
+    worktrees_root = _resolve_worktrees_root(project_root=project_root, worktree_root=policy.worktree_root)
     worktrees_root.mkdir(parents=True, exist_ok=True)
     base_name = f"{stamp}-{slug}"
     worktree_path = worktrees_root / base_name
-    branch = f"agent-team/{base_name}"
+    branch = f"{policy.branch_prefix}{base_name}"
     suffix = 1
     while worktree_path.exists() or git(project_root, ["rev-parse", "--verify", "--quiet", branch]).returncode == 0:
         suffix += 1
         worktree_path = worktrees_root / f"{base_name}-{suffix}"
-        branch = f"agent-team/{base_name}-{suffix}"
+        branch = f"{policy.branch_prefix}{base_name}-{suffix}"
 
     base_branch = git_stdout(project_root, ["branch", "--show-current"])
     base_head = git_stdout(project_root, ["rev-parse", "HEAD"])
-    result = git(project_root, ["worktree", "add", "-b", branch, str(worktree_path), "HEAD"])
+    result = git(project_root, ["worktree", "add", "-b", branch, str(worktree_path), base_ref])
     if result.returncode != 0:
         detail = (result.stderr or result.stdout).strip()
         raise RuntimeError(f"Failed to create task worktree: {detail}")
+
+    target_state_root = default_state_root(repo_root=worktree_path).resolve()
+    snapshot_path = copy_agent_team_support_state(
+        source_state_root=source_state_root,
+        target_state_root=target_state_root,
+        policy=policy,
+    )
     return TaskWorktree(
         path=worktree_path.resolve(),
         branch=branch,
         base_branch=base_branch,
         base_head=base_head,
+        base_ref=base_ref,
+        base_commit=base_commit,
+        worktree_policy_source=policy.source,
+        worktree_policy_snapshot_path=snapshot_path.resolve(),
+        naming_source=naming_source,
     )
+
+
+def _resolve_worktrees_root(*, project_root: Path, worktree_root: str) -> Path:
+    candidate = Path(worktree_root)
+    return candidate if candidate.is_absolute() else project_root / candidate

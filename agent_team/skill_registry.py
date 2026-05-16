@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
 
+from .harness_paths import default_state_root, resolve_state_root
 from .packaged_assets import ASSET_ROOT
 from .workflow import STAGES, normalize_stage
 
@@ -60,8 +61,9 @@ class SkillRegistry:
     preference_path: Path | None = None
 
     def __post_init__(self) -> None:
+        self.repo_root = self.repo_root.resolve()
         if self.preference_path is None:
-            self.preference_path = self.repo_root / ".agent-team" / "skill-preferences.yaml"
+            self.preference_path = default_state_root(repo_root=self.repo_root) / "skill-preferences.yaml"
 
     def list_skills(self, stage: str | None = None, source: str | None = None) -> list[Skill]:
         skills_by_name: dict[str, Skill] = {}
@@ -106,9 +108,10 @@ class SkillRegistry:
 
     def load_preferences(self) -> SkillPreferences:
         assert self.preference_path is not None
-        if not self.preference_path.exists():
+        path = self._load_preference_path()
+        if not path.exists():
             return SkillPreferences()
-        return _parse_preferences(self.preference_path.read_text())
+        return _parse_preferences(path.read_text())
 
     def save_preferences(self, preferences: SkillPreferences) -> None:
         assert self.preference_path is not None
@@ -148,6 +151,13 @@ class SkillRegistry:
         for stage in STAGES:
             skills.extend(_discover_skill_root(self.repo_root / stage / "skills", source="project", stage=stage))
         return skills
+
+    def _load_preference_path(self) -> Path:
+        assert self.preference_path is not None
+        if self.preference_path.exists():
+            return self.preference_path
+        legacy_path = resolve_state_root(repo_root=self.repo_root) / "skill-preferences.yaml"
+        return legacy_path if legacy_path.exists() else self.preference_path
 
 
 def skill_injection_text(skills: list[Skill], *, asset_root: str = ".agent-team/skills") -> str:

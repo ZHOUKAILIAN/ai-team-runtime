@@ -9,6 +9,11 @@
 - 默认运行五层九阶段流程，而不是旧的 Product / Dev / QA 三角色串联。
 - 反馈、返工、证据、人工决策和本地接力都会沉淀成运行时资产。
 
+## 根目录约定
+
+- `agt-control/`: 仓库内共享、正式、可提交的 Agent Team 控制面。
+- `.agt/`: 本地隐藏的运行态、私有配置、session 状态、memory 和 runtime trace。
+
 ## 五层阶段
 
 权威流程链路：
@@ -53,7 +58,7 @@ cd /path/to/your/project
 agent-team init
 ```
 
-`init` 会创建 `agent-team/project/five-layer/` 并准备五层分类 prompt。交互终端默认会尝试调用 `codex exec`，使用 GitHub skill source：
+`init` 会创建 `agt-control/project/five-layer/` 并准备五层分类 prompt。交互终端默认会尝试调用 `codex exec`，使用 GitHub skill source：
 
 ```text
 https://github.com/ZHOUKAILIAN/skills/tree/feature/five-layer-classifier-skill/five-layer-classifier
@@ -62,9 +67,9 @@ https://github.com/ZHOUKAILIAN/skills/tree/feature/five-layer-classifier-skill/f
 非交互式脚本默认跳过实际 Codex 执行，只写入：
 
 ```text
-agent-team/project/five-layer/classification.md
-agent-team/project/five-layer/classification-run.json
-agent-team/project/five-layer/classification-prompt.md
+agt-control/project/five-layer/classification.md
+agt-control/project/five-layer/classification-run.json
+agt-control/project/five-layer/classification-prompt.md
 ```
 
 强制运行或跳过：
@@ -95,12 +100,28 @@ agent-team run --session-id <session_id> --executor dry-run --auto
 agent-team record-human-decision --session-id <session_id> --decision go
 ```
 
+## Task worktrees
+
+`agent-team run` 默认不会直接从当前 `HEAD` 继续做，而是先按 clean base 策略创建新的 task worktree 和最小 branch。
+
+- 本地策略文件：`.agt/local/worktree-policy.json`
+- 默认 clean base fallback：`["origin/test", "origin/main", "test", "main"]`
+- 默认分支格式：`feature/<date>-<slug>`
+- 默认 worktree 目录：`.worktrees/`
+
+新 worktree 只复制 AGT 的本地支持状态，不复制历史运行现场：
+
+- 会复制：`.agt/executor-env.json`、`.agt/skill-preferences.yaml`、`.agt/local/`、`.agt/memory/`
+- 不会复制：`.agt/session-index.json`、`.agt/_runtime/`、历史 session 产物
+
+`continue` 只会重新打开已经记录到 `.agt/session-index.json` 的 worktree，不会新建 worktree。
+
 ## 产物
 
 人类可读 session 产物位于：
 
 ```text
-<repo-root>/.agent-team/<session_id>/
+<repo-root>/.agt/<session_id>/
 ```
 
 典型产物：
@@ -120,7 +141,7 @@ session-handoff.md
 机器运行态位于：
 
 ```text
-<repo-root>/.agent-team/_runtime/sessions/<session_id>/
+<repo-root>/.agt/_runtime/sessions/<session_id>/
 ```
 
 每个 stage-run 记录不可跳过链路：
@@ -139,7 +160,7 @@ _runtime/sessions/<session-id>/roles/<role>/attempt-001/command-outputs/<role>-c
 
 ## Skill defaults and runtime workflow
 
-`.agent-team/skill-preferences.yaml` 保存每个阶段的默认 skill、上次选择和使用频率。
+`.agt/skill-preferences.yaml` 保存每个阶段的默认 skill、上次选择和使用频率。
 
 ```bash
 agent-team skill list

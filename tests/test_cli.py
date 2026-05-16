@@ -85,11 +85,11 @@ class CliTests(unittest.TestCase):
             self.assertIn("project_root:", result.stdout)
             self.assertIn("executor_env_config:", result.stdout)
             self.assertIn("five_layer_classification_status: skipped", result.stdout)
-            self.assertTrue((repo_root / ".agent-team" / "memory").is_dir())
-            self.assertTrue((repo_root / ".agent-team" / "executor-env.json").is_file())
-            self.assertTrue((repo_root / "agent-team" / "project" / "doc-map.json").is_file())
-            self.assertTrue((repo_root / "agent-team" / "project" / "five-layer" / "classification-prompt.md").is_file())
-            self.assertTrue((repo_root / "agent-team" / "project" / "five-layer" / "classification-run.json").is_file())
+            self.assertTrue((repo_root / ".agt" / "memory").is_dir())
+            self.assertTrue((repo_root / ".agt" / "executor-env.json").is_file())
+            self.assertTrue((repo_root / "agt-control" / "project" / "doc-map.json").is_file())
+            self.assertTrue((repo_root / "agt-control" / "project" / "five-layer" / "classification-prompt.md").is_file())
+            self.assertTrue((repo_root / "agt-control" / "project" / "five-layer" / "classification-run.json").is_file())
 
     def test_update_reports_and_preserves_existing_project_files(self) -> None:
         with TemporaryDirectory(dir=local_temp_dir()) as temp_dir:
@@ -155,7 +155,7 @@ class CliTests(unittest.TestCase):
             self.assertIn("预览更新", result.stdout)
             self.assertEqual((project_dir / "doc-map.json").read_text(), json.dumps({"requirements": "docs/requirements"}))
             self.assertFalse((project_dir / "context.md").exists())
-            self.assertFalse((repo_root / ".agent-team").exists())
+            self.assertFalse((repo_root / ".agt").exists())
 
     def test_run_help_lists_skill_overrides(self) -> None:
         result = subprocess.run(
@@ -240,7 +240,7 @@ class CliTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0)
             self.assertIn("implementation:", result.stdout)
             self.assertIn("productdefinition:", result.stdout)
-            self.assertTrue((repo_root / ".agent-team" / "skill-preferences.yaml").exists())
+            self.assertTrue((repo_root / ".agt" / "skill-preferences.yaml").exists())
 
     def test_run_requirement_dry_run_stops_at_product_definition_approval_gate(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
@@ -287,6 +287,85 @@ class CliTests(unittest.TestCase):
                     / "product-definition-stage-result.json"
                 ).exists()
             )
+
+    def test_run_requirement_command_executor_skips_product_definition_gate_when_route_marks_no_l1_delta(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+
+        with TemporaryDirectory(dir=local_temp_dir()) as temp_dir:
+            worker_path = Path(temp_dir) / "skip_product_definition_worker.py"
+            worker_path.write_text(
+                "import json, os\n"
+                "from pathlib import Path\n"
+                "stage = os.environ['AGENT_TEAM_STAGE']\n"
+                "payloads = {\n"
+                "  'Route': {\n"
+                "    'status': 'completed',\n"
+                "    'artifact_content': json.dumps({\n"
+                "      'affected_layers': ['L2', 'L3'],\n"
+                "      'required_stages': ['TechnicalDesign', 'Implementation', 'Verification', 'GovernanceReview', 'Acceptance', 'SessionHandoff'],\n"
+                "      'stage_decisions': {'ProductDefinition': {'decision': 'skipped', 'reason': 'no_l1_delta'}},\n"
+                "      'verification_mode': 'static_only',\n"
+                "      'baseline_sources': [],\n"
+                "      'red_lines': [],\n"
+                "      'unresolved_questions': []\n"
+                "    }),\n"
+                "    'journal': '',\n"
+                "    'findings': [],\n"
+                "    'evidence': [{'name': 'route_classification', 'kind': 'artifact', 'summary': 'routed', 'artifact_path': '', 'command': '', 'exit_code': None, 'producer': 'test'}],\n"
+                "    'suggested_next_owner': '',\n"
+                "    'summary': 'route',\n"
+                "    'acceptance_status': '',\n"
+                "    'blocked_reason': ''\n"
+                "  },\n"
+                "  'TechnicalDesign': {\n"
+                "    'status': 'completed',\n"
+                "    'artifact_content': '# Technical Design\\n',\n"
+                "    'journal': '',\n"
+                "    'findings': [],\n"
+                "    'evidence': [{'name': 'technical_design_plan', 'kind': 'report', 'summary': 'design', 'artifact_path': '', 'command': '', 'exit_code': None, 'producer': 'test'}],\n"
+                "    'suggested_next_owner': '',\n"
+                "    'summary': 'design',\n"
+                "    'acceptance_status': '',\n"
+                "    'blocked_reason': ''\n"
+                "  }\n"
+                "}\n"
+                "Path(os.environ['AGENT_TEAM_RESULT_BUNDLE']).write_text(json.dumps(payloads[stage]))\n"
+            )
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "agent_team",
+                    "--repo-root",
+                    str(repo_root),
+                    "--state-root",
+                    temp_dir,
+                    "run",
+                    "--message",
+                    "执行这个需求：Route 跳过 ProductDefinition",
+                    "--executor",
+                    "command",
+                    "--executor-command",
+                    f"{sys.executable} {worker_path}",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("runtime_driver_status: waiting_human", result.stdout)
+            self.assertIn("current_state: WaitForTechnicalDesignApproval", result.stdout)
+            self.assertIn("current_stage: TechnicalDesign", result.stdout)
+            self.assertIn("product_definition: no_l1_delta (skipped approval gate; continue to next required stage)", result.stdout)
+            self.assertNotIn("WaitForProductDefinitionApproval", result.stdout)
+            self.assertIn("next_action: approve|rework|reject", result.stdout)
+            session_id = _session_id_from_stdout(result.stdout)
+            session_dir = Path(temp_dir) / session_id
+            self.assertTrue((session_dir / "route-packet.json").exists())
+            self.assertFalse((session_dir / "product-definition-delta.md").exists())
+            self.assertTrue((session_dir / "technical-design.md").exists())
 
     def test_run_requirement_without_message_or_session_id_in_non_tty_fails_cleanly(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
@@ -598,6 +677,31 @@ class CliTests(unittest.TestCase):
         self.assertIn("澄清问题", _run_requirement_next_step_text("ProductDefinition"))
         self.assertIn("待确认问题", _run_requirement_next_step_text("TechnicalDesign"))
 
+    def test_skipped_product_definition_summary_and_next_step_explain_no_l1_delta(self) -> None:
+        from agent_team.cli import _run_requirement_next_step_text, _run_requirement_stage_summary_lines
+        from agent_team.models import WorkflowSummary
+
+        summary = WorkflowSummary(
+            session_id="session-1",
+            runtime_mode="runtime_driver",
+            current_state="WaitForTechnicalDesignApproval",
+            current_stage="TechnicalDesign",
+            stage_statuses={"Route": "completed", "ProductDefinition": "skipped", "TechnicalDesign": "drafted"},
+            route_required_stages=["TechnicalDesign", "Implementation"],
+            route_stage_decisions={"ProductDefinition": {"decision": "skipped", "reason": "no_l1_delta"}},
+            verification_mode="static_only",
+            product_definition_outcome="no_l1_delta",
+        )
+
+        summary_lines = _run_requirement_stage_summary_lines("TechnicalDesign", summary)
+        next_step = _run_requirement_next_step_text("TechnicalDesign", summary)
+
+        self.assertIn("无 L1 delta", summary_lines[0])
+        self.assertIn("跳过 ProductDefinition 审批门", summary_lines[1])
+        self.assertIn("no L1 delta", next_step)
+        self.assertIn("跳过", next_step)
+        self.assertIn("技术设计文档", next_step)
+
     def test_run_accepts_positional_requirement_message(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
 
@@ -874,7 +978,7 @@ class CliTests(unittest.TestCase):
                 "print('worker stdout')\n"
                 "print('worker stderr', file=sys.stderr)\n"
                 "payloads = {\n"
-                "  'Route': {'status': 'completed', 'artifact_content': '{\"affected_layers\":[\"L1\"]}', 'journal': '', 'evidence': [{'name': 'route_classification', 'kind': 'artifact', 'summary': 'routed'}], 'summary': 'route'},\n"
+                "  'Route': {'status': 'completed', 'artifact_content': '{\"affected_layers\":[\"L1\"],\"required_stages\":[\"ProductDefinition\",\"ProjectRuntime\",\"TechnicalDesign\",\"Implementation\",\"Verification\",\"GovernanceReview\",\"Acceptance\",\"SessionHandoff\"],\"stage_decisions\":{\"ProductDefinition\":{\"decision\":\"required\",\"reason\":\"l1_delta_pending_approval\"}},\"verification_mode\":\"static_only\",\"baseline_sources\":[],\"red_lines\":[],\"unresolved_questions\":[]}', 'journal': '', 'evidence': [{'name': 'route_classification', 'kind': 'artifact', 'summary': 'routed'}], 'summary': 'route'},\n"
                 "  'ProductDefinition': {'status': 'completed', 'artifact_content': '# Product Definition Delta\\n', 'journal': '', 'evidence': [{'name': 'l1_classification', 'kind': 'artifact', 'summary': 'l1'}], 'summary': 'l1'},\n"
                 "}\n"
                 "payload = payloads[stage]\n"
@@ -970,7 +1074,7 @@ class CliTests(unittest.TestCase):
                 "    (repo / 'existing.txt').write_text('dirty after stage\\n')\n"
                 "    (repo / 'created.txt').write_text('created by stage\\n')\n"
                 "payloads = {\n"
-                "  'Route': {'status': 'completed', 'artifact_content': '{\"affected_layers\":[\"L1\"]}', 'journal': '', 'evidence': [{'name': 'route_classification', 'kind': 'artifact', 'summary': 'routed'}], 'summary': 'route'},\n"
+                "  'Route': {'status': 'completed', 'artifact_content': '{\"affected_layers\":[\"L1\"],\"required_stages\":[\"ProductDefinition\",\"ProjectRuntime\",\"TechnicalDesign\",\"Implementation\",\"Verification\",\"GovernanceReview\",\"Acceptance\",\"SessionHandoff\"],\"stage_decisions\":{\"ProductDefinition\":{\"decision\":\"required\",\"reason\":\"l1_delta_pending_approval\"}},\"verification_mode\":\"static_only\",\"baseline_sources\":[],\"red_lines\":[],\"unresolved_questions\":[]}', 'journal': '', 'evidence': [{'name': 'route_classification', 'kind': 'artifact', 'summary': 'routed'}], 'summary': 'route'},\n"
                 "  'ProductDefinition': {'status': 'completed', 'artifact_content': '# Product Definition Delta\\n', 'journal': '', 'evidence': [{'name': 'l1_classification', 'kind': 'artifact', 'summary': 'l1'}], 'summary': 'l1'},\n"
                 "}\n"
                 "payload = payloads[stage]\n"
@@ -1351,9 +1455,43 @@ class CliTests(unittest.TestCase):
             subprocess.run(["git", "init"], cwd=repo_root, capture_output=True, text=True, check=True)
             subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo_root, check=True)
             subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo_root, check=True)
-            (repo_root / "README.md").write_text("# test repo\n")
+            (repo_root / "README.md").write_text("# main\n")
             subprocess.run(["git", "add", "README.md"], cwd=repo_root, capture_output=True, text=True, check=True)
             subprocess.run(["git", "commit", "-m", "initial"], cwd=repo_root, capture_output=True, text=True, check=True)
+            subprocess.run(["git", "checkout", "-b", "test"], cwd=repo_root, capture_output=True, text=True, check=True)
+            (repo_root / "README.md").write_text("# test baseline\n")
+            subprocess.run(["git", "commit", "-am", "baseline"], cwd=repo_root, capture_output=True, text=True, check=True)
+            subprocess.run(
+                ["git", "checkout", "-b", "feature/current"],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+
+            state_root = repo_root / ".agt"
+            (state_root / "local").mkdir(parents=True, exist_ok=True)
+            (state_root / "local" / "worktree-policy.json").write_text(
+                json.dumps(
+                    {
+                        "base_ref_candidates": ["test"],
+                        "branch_prefix": "feature/",
+                        "worktree_root": ".worktrees",
+                        "date_format": "%Y%m%d",
+                        "slug_max_length": 40,
+                        "naming_mode": "request_summary_with_fallback",
+                    }
+                )
+            )
+            (state_root / "executor-env.json").write_text(
+                '{"inherit":[],"inherit_prefixes":[],"set":{"FOO":"BAR"},"unset":[]}\n'
+            )
+            (state_root / "skill-preferences.yaml").write_text("initialized: true\n")
+            (state_root / "memory" / "Implementation").mkdir(parents=True, exist_ok=True)
+            (state_root / "memory" / "Implementation" / "lessons.md").write_text("carry over\n")
+            (state_root / "_runtime" / "sessions" / "old").mkdir(parents=True, exist_ok=True)
+            (state_root / "_runtime" / "sessions" / "old" / "session.json").write_text("{}\n")
+            (state_root / "session-index.json").write_text(json.dumps({"sessions": [{"session_id": "old"}]}))
 
             stdout = io.StringIO()
             with patch("sys.stdout", stdout):
@@ -1372,21 +1510,30 @@ class CliTests(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             output = stdout.getvalue()
             self.assertIn("worktree_path:", output)
-            self.assertIn("branch: agent-team/", output)
-            self.assertIn("新增-登录-按钮", output)
+            self.assertIn("branch: feature/", output)
+            self.assertIn("add-login-button", output)
             session_id = _session_id_from_stdout(output)
 
-            index_path = repo_root / ".agent-team" / "session-index.json"
+            index_path = repo_root / ".agt" / "session-index.json"
             index_payload = json.loads(index_path.read_text())
-            entry = index_payload["sessions"][0]
+            entry = next(item for item in index_payload["sessions"] if item["session_id"] == session_id)
             self.assertEqual(entry["session_id"], session_id)
-            self.assertIn("新增-登录-按钮", entry["branch"])
+            self.assertEqual(entry["base_ref"], "test")
+            self.assertTrue(entry["base_commit"])
+            self.assertEqual(entry["worktree_policy_source"], "local_file")
+            self.assertEqual(entry["naming_source"], "request_summary")
+            self.assertIn("add-login-button", entry["branch"])
             worktree_path = Path(entry["worktree_path"])
             self.assertTrue(worktree_path.exists())
-            self.assertTrue((worktree_path / ".agent-team" / session_id / "product-definition-delta.md").exists())
+            self.assertEqual((worktree_path / "README.md").read_text(), "# test baseline\n")
+            self.assertTrue((worktree_path / ".agt" / session_id / "product-definition-delta.md").exists())
+            self.assertTrue((worktree_path / ".agt" / "skill-preferences.yaml").exists())
+            self.assertTrue((worktree_path / ".agt" / "memory" / "Implementation" / "lessons.md").exists())
+            self.assertFalse((worktree_path / ".agt" / "_runtime" / "sessions" / "old").exists())
+            self.assertFalse((worktree_path / ".agt" / "session-index.json").exists())
             self.assertEqual(
-                (worktree_path / ".agent-team" / "executor-env.json").read_text(),
-                (repo_root / ".agent-team" / "executor-env.json").read_text(),
+                (worktree_path / ".agt" / "executor-env.json").read_text(),
+                (repo_root / ".agt" / "executor-env.json").read_text(),
             )
 
             continue_stdout = io.StringIO()
