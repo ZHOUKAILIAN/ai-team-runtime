@@ -105,7 +105,7 @@ class StageMachineTests(unittest.TestCase):
         with self.assertRaises(StageTransitionError):
             StageMachine().advance(summary=summary, stage_result=result)
 
-    def test_human_go_decision_moves_from_product_definition_wait_to_project_runtime(self) -> None:
+    def test_human_go_decision_uses_next_required_stage_after_product_definition(self) -> None:
         from agent_team.models import WorkflowSummary
         from agent_team.stage_machine import StageMachine
 
@@ -114,14 +114,61 @@ class StageMachineTests(unittest.TestCase):
             runtime_mode="harness",
             current_state="WaitForProductDefinitionApproval",
             current_stage="ProductDefinition",
+            route_required_stages=["ProductDefinition", "TechnicalDesign", "Implementation"],
         )
 
         updated = StageMachine().apply_human_decision(summary=summary, decision="go")
 
-        self.assertEqual(updated.current_state, "ProjectRuntime")
-        self.assertEqual(updated.current_stage, "ProjectRuntime")
+        self.assertEqual(updated.current_state, "TechnicalDesign")
+        self.assertEqual(updated.current_stage, "TechnicalDesign")
         self.assertEqual(updated.stage_statuses["ProductDefinition"], "approved")
         self.assertEqual(updated.human_decision, "go")
+
+    def test_human_go_decision_uses_next_required_stage_after_technical_design(self) -> None:
+        from agent_team.models import WorkflowSummary
+        from agent_team.stage_machine import StageMachine
+
+        summary = WorkflowSummary(
+            session_id="session-1",
+            runtime_mode="harness",
+            current_state="WaitForTechnicalDesignApproval",
+            current_stage="TechnicalDesign",
+            route_required_stages=["TechnicalDesign", "Verification", "Acceptance"],
+        )
+
+        updated = StageMachine().apply_human_decision(summary=summary, decision="go")
+
+        self.assertEqual(updated.current_state, "Verification")
+        self.assertEqual(updated.current_stage, "Verification")
+        self.assertEqual(updated.stage_statuses["TechnicalDesign"], "approved")
+        self.assertEqual(updated.human_decision, "go")
+
+    def test_technical_design_omitted_from_route_skips_approval_wait(self) -> None:
+        from agent_team.models import StageResultEnvelope, WorkflowSummary
+        from agent_team.stage_machine import StageMachine
+
+        summary = WorkflowSummary(
+            session_id="session-1",
+            runtime_mode="harness",
+            current_state="TechnicalDesign",
+            current_stage="TechnicalDesign",
+            route_required_stages=["Verification"],
+        )
+
+        updated = StageMachine().advance(
+            summary=summary,
+            stage_result=StageResultEnvelope(
+                session_id="session-1",
+                stage="TechnicalDesign",
+                status="completed",
+                artifact_name="technical-design.md",
+                artifact_content="# Technical Design\n",
+            ),
+        )
+
+        self.assertEqual(updated.current_state, "Verification")
+        self.assertEqual(updated.current_stage, "Verification")
+        self.assertEqual(updated.stage_statuses["TechnicalDesign"], "completed")
 
     def test_runtime_walks_through_five_layer_stages(self) -> None:
         from agent_team.models import StageResultEnvelope, WorkflowSummary
@@ -230,6 +277,124 @@ class StageMachineTests(unittest.TestCase):
         self.assertEqual(summary.current_state, "WaitForHumanDecision")
         self.assertEqual(summary.current_stage, "SessionHandoff")
         self.assertEqual(summary.human_decision, "pending")
+
+    def test_route_required_stages_drive_remaining_runtime_successors(self) -> None:
+        from agent_team.models import StageResultEnvelope, WorkflowSummary
+        from agent_team.stage_machine import StageMachine
+
+        machine = StageMachine()
+        summary = WorkflowSummary(
+            session_id="session-1",
+            runtime_mode="harness",
+            current_state="ProjectRuntime",
+            current_stage="ProjectRuntime",
+            route_required_stages=["ProjectRuntime", "Implementation", "GovernanceReview", "SessionHandoff"],
+        )
+
+        summary = machine.advance(
+            summary=summary,
+            stage_result=StageResultEnvelope(
+                session_id="session-1",
+                stage="ProjectRuntime",
+                status="completed",
+                artifact_name="project-landing-delta.md",
+                artifact_content="# Project Landing Delta\n",
+            ),
+        )
+        self.assertEqual(summary.current_state, "Implementation")
+
+        summary = machine.advance(
+            summary=summary,
+            stage_result=StageResultEnvelope(
+                session_id="session-1",
+                stage="Implementation",
+                status="completed",
+                artifact_name="implementation.md",
+                artifact_content="# Implementation\n",
+            ),
+        )
+        self.assertEqual(summary.current_state, "GovernanceReview")
+
+        summary = machine.advance(
+            summary=summary,
+            stage_result=StageResultEnvelope(
+                session_id="session-1",
+                stage="GovernanceReview",
+                status="completed",
+                artifact_name="governance-review.md",
+                artifact_content="# Governance Review\n",
+            ),
+        )
+        self.assertEqual(summary.current_state, "SessionHandoff")
+
+        summary = machine.advance(
+            summary=summary,
+            stage_result=StageResultEnvelope(
+                session_id="session-1",
+                stage="SessionHandoff",
+                status="completed",
+                artifact_name="session-handoff.md",
+                artifact_content="# Session Handoff\n",
+            ),
+        )
+        self.assertEqual(summary.current_state, "WaitForHumanDecision")
+        self.assertEqual(summary.current_stage, "SessionHandoff")
+
+    def test_verification_pass_uses_next_required_stage_order(self) -> None:
+        from agent_team.models import StageResultEnvelope, WorkflowSummary
+        from agent_team.stage_machine import StageMachine
+
+        summary = WorkflowSummary(
+            session_id="session-1",
+            runtime_mode="harness",
+            current_state="Verification",
+            current_stage="Verification",
+            route_required_stages=["Verification", "Acceptance"],
+        )
+
+        updated = StageMachine().advance(
+            summary=summary,
+            stage_result=StageResultEnvelope(
+                session_id="session-1",
+                stage="Verification",
+                status="completed",
+                artifact_name="verification-report.md",
+                artifact_content="# Verification Report\n",
+            ),
+        )
+
+        self.assertEqual(updated.current_state, "Acceptance")
+        self.assertEqual(updated.current_stage, "Acceptance")
+        self.assertEqual(updated.stage_statuses["Verification"], "passed")
+
+    def test_acceptance_result_finishes_when_session_handoff_not_required(self) -> None:
+        from agent_team.models import StageResultEnvelope, WorkflowSummary
+        from agent_team.stage_machine import StageMachine
+
+        summary = WorkflowSummary(
+            session_id="session-1",
+            runtime_mode="harness",
+            current_state="Acceptance",
+            current_stage="Acceptance",
+            route_required_stages=["Acceptance"],
+            acceptance_status="pending",
+        )
+
+        updated = StageMachine().advance(
+            summary=summary,
+            stage_result=StageResultEnvelope(
+                session_id="session-1",
+                stage="Acceptance",
+                status="completed",
+                artifact_name="acceptance-report.md",
+                artifact_content="# Acceptance Report\n",
+                acceptance_status="recommended_go",
+            ),
+        )
+
+        self.assertEqual(updated.current_state, "Done")
+        self.assertEqual(updated.current_stage, "Acceptance")
+        self.assertEqual(updated.acceptance_status, "recommended_go")
 
     def test_verification_findings_route_back_to_implementation(self) -> None:
         from agent_team.models import Finding, StageResultEnvelope, WorkflowSummary
