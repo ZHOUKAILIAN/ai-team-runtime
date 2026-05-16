@@ -8,6 +8,8 @@ from .models import model_dataclass
 from .packaged_assets import packaged_text
 from .workflow import STAGE_SLUGS, STAGES
 
+CONTROL_ROOT_NAME = "agt-control"
+LEGACY_CONTROL_ROOT_NAME = "agent-team"
 
 DEFAULT_DOC_MAP = {
     "product_definition": "docs/product-definition",
@@ -109,7 +111,7 @@ class ProjectUpdateReport:
 
 def detect_project_structure(repo_root: Path) -> ProjectStructure:
     repo_root = repo_root.resolve()
-    agent_team_root = repo_root / "agent-team"
+    agent_team_root = control_root(repo_root)
     project_root = agent_team_root / "project"
     doc_map_path = project_root / "doc-map.json"
     existing_doc_map = _read_doc_map(doc_map_path)
@@ -211,7 +213,8 @@ def update_project_structure(
 def resolve_role_context_paths(repo_root: Path, role_name: str) -> RoleContextPaths:
     repo_root = repo_root.resolve()
     slug = ROLE_SLUGS.get(role_name, role_name.lower())
-    agent_team_roles_dir = repo_root / "agent-team" / "project" / "roles"
+    resolved_root = control_root(repo_root)
+    agent_team_roles_dir = resolved_root / "project" / "roles"
     agent_team_context_path = agent_team_roles_dir / f"{slug}.context.md"
     if agent_team_context_path.exists():
         return RoleContextPaths(
@@ -219,7 +222,7 @@ def resolve_role_context_paths(repo_root: Path, role_name: str) -> RoleContextPa
             role_dir=agent_team_roles_dir,
             context_path=agent_team_context_path,
             guidance_path=agent_team_roles_dir / f"{slug}.contract.md",
-            source="agent-team-project",
+            source="agt-control-project" if resolved_root.name == CONTROL_ROOT_NAME else "agent-team-project",
         )
 
     legacy_role_dir = repo_root / role_name
@@ -240,6 +243,15 @@ def resolve_role_context_paths(repo_root: Path, role_name: str) -> RoleContextPa
         guidance_path=packaged_role_dir / "contract.md",
         source="packaged",
     )
+
+
+def control_root(repo_root: Path) -> Path:
+    repo_root = repo_root.resolve()
+    preferred_root = repo_root / CONTROL_ROOT_NAME
+    legacy_root = repo_root / LEGACY_CONTROL_ROOT_NAME
+    if preferred_root.exists() or not legacy_root.exists():
+        return preferred_root
+    return legacy_root
 
 
 def _read_doc_map(path: Path) -> dict[str, str]:
